@@ -1,19 +1,22 @@
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ArrowRight } from "lucide-react";
+import harryImage from "@/assets/team-harry.jpg";
+import actreceImage from "@/assets/team-actrece.png";
+import maviImage from "@/assets/team-mavi.png";
 
 const team = [
   {
     name: "Harry Louise Metro",
-    image: "https://images.unsplash.com/photo-1594824476967-48c8b964273f?w=300&h=300&fit=crop"
+    image: harryImage
   },
   {
     name: "Actrcee Delos Santos",
-    image: "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=300&h=300&fit=crop"
+    image: actreceImage
   },
   {
     name: "Mavi Angel Caling",
-    image: "https://images.unsplash.com/photo-1580489944761-15a19d654956?w=300&h=300&fit=crop"
+    image: maviImage
   }
 ];
 

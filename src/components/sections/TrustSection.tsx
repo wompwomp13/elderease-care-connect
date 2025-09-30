@@ -1,4 +1,5 @@
 import { Button } from "@/components/ui/button";
+import trustImage from "@/assets/trust-image.png";
 
 const TrustSection = () => {
   return (
@@ -16,7 +17,7 @@ const TrustSection = () => {
             </div>
             <div className="h-full min-h-[400px]">
               <img 
-                src="https://images.unsplash.com/photo-1576765608535-5f04d1e3f289?w=800&h=600&fit=crop" 
+                src={trustImage} 
                 alt="Care provider with senior" 
                 className="w-full h-full object-cover"
               />

@@ -1,3 +1,6 @@
+import about1 from "@/assets/about-1.png";
+import about2 from "@/assets/about-2.png";
+
 const AboutSection = () => {
   return (
     <section id="about" className="py-20 bg-background">
@@ -8,12 +11,12 @@ const AboutSection = () => {
 
         <div className="grid md:grid-cols-2 gap-8 mb-12 max-w-6xl mx-auto">
           <img 
-            src="https://images.unsplash.com/photo-1516733968668-dbdce39c4651?w=600&h=400&fit=crop" 
+            src={about1} 
             alt="Elder care" 
             className="rounded-2xl shadow-lg w-full h-[300px] object-cover"
           />
           <img 
-            src="https://images.unsplash.com/photo-1581579438747-1dc8d17bbce4?w=600&h=400&fit=crop" 
+            src={about2} 
             alt="Compassionate care" 
             className="rounded-2xl shadow-lg w-full h-[300px] object-cover"
           />

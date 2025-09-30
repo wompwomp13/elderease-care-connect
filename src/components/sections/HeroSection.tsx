@@ -1,4 +1,5 @@
 import { Button } from "@/components/ui/button";
+import heroImage from "@/assets/hero-companion.png";
 
 const HeroSection = () => {
   return (
@@ -21,7 +22,7 @@ const HeroSection = () => {
           </div>
           <div className="relative">
             <img 
-              src="https://images.unsplash.com/photo-1559839734-2b71ea197ec2?w=800&h=800&fit=crop" 
+              src={heroImage} 
               alt="Healthcare professional" 
               className="rounded-3xl shadow-2xl w-full h-[500px] object-cover"
             />
