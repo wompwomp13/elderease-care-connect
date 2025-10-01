@@ -62,7 +62,7 @@ const FAQChatbotSection = () => {
             </div>
 
             {/* Chat Messages */}
-            <div className="bg-secondary/20 p-6 h-[400px] overflow-y-auto space-y-4">
+            <div className="bg-gradient-to-b from-secondary/30 to-secondary/50 p-6 h-[400px] overflow-y-auto space-y-4">
               {sampleChat.map((chat, index) => (
                 <div
                   key={index}
@@ -70,13 +70,13 @@ const FAQChatbotSection = () => {
                   style={{ animationDelay: `${index * 0.2}s` }}
                 >
                   <div
-                    className={`max-w-[75%] rounded-2xl px-4 py-3 ${
+                    className={`max-w-[75%] rounded-2xl px-4 py-3 shadow-md ${
                       chat.type === "user"
-                        ? "bg-primary text-primary-foreground rounded-br-sm"
-                        : "bg-card text-card-foreground shadow-sm rounded-bl-sm"
+                        ? "bg-gradient-to-br from-primary to-primary-dark text-primary-foreground rounded-br-sm"
+                        : "bg-white border border-border/50 text-foreground rounded-bl-sm"
                     }`}
                   >
-                    <p className="text-sm whitespace-pre-line">{chat.message}</p>
+                    <p className="text-sm whitespace-pre-line font-medium">{chat.message}</p>
                     <p
                       className={`text-xs mt-1 ${
                         chat.type === "user" ? "text-primary-foreground/70" : "text-muted-foreground"
@@ -90,11 +90,11 @@ const FAQChatbotSection = () => {
               
               {/* Typing Indicator */}
               <div className="flex justify-start">
-                <div className="bg-card rounded-2xl rounded-bl-sm px-4 py-3 shadow-sm">
+                <div className="bg-white border border-border/50 rounded-2xl rounded-bl-sm px-4 py-3 shadow-md">
                   <div className="flex gap-1">
-                    <span className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce" style={{ animationDelay: "0s" }}></span>
-                    <span className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce" style={{ animationDelay: "0.2s" }}></span>
-                    <span className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce" style={{ animationDelay: "0.4s" }}></span>
+                    <span className="w-2 h-2 bg-primary rounded-full animate-bounce" style={{ animationDelay: "0s" }}></span>
+                    <span className="w-2 h-2 bg-primary rounded-full animate-bounce" style={{ animationDelay: "0.2s" }}></span>
+                    <span className="w-2 h-2 bg-primary rounded-full animate-bounce" style={{ animationDelay: "0.4s" }}></span>
                   </div>
                 </div>
               </div>

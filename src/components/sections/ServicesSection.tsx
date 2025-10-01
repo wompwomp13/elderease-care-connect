@@ -48,13 +48,13 @@ const ServicesSection = () => {
           {services.map((service, index) => (
             <Card 
               key={index} 
-              className="text-center hover:shadow-xl transition-all duration-300 hover:-translate-y-2 border-none bg-card"
+              className="group hover:shadow-2xl transition-all duration-300 cursor-pointer border-primary/20 bg-card hover:scale-105 hover:border-primary/50"
             >
               <CardContent className="pt-8 pb-6">
-                <div className="w-16 h-16 bg-primary/10 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                <div className="w-16 h-16 bg-gradient-to-br from-primary/10 to-primary/5 rounded-2xl flex items-center justify-center mx-auto mb-4 group-hover:from-primary/20 group-hover:to-primary/10 transition-all shadow-md">
                   <service.icon className="w-8 h-8 text-primary" />
                 </div>
-                <h4 className="font-semibold text-foreground mb-2">{service.title}</h4>
+                <h4 className="font-semibold text-foreground mb-2 group-hover:text-primary transition-colors">{service.title}</h4>
                 <p className="text-sm text-muted-foreground">{service.description}</p>
               </CardContent>
             </Card>
