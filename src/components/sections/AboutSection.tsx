@@ -1,4 +1,5 @@
 import { Info } from "lucide-react";
+import { motion } from "framer-motion";
 import about1 from "@/assets/about-1.png";
 import about2 from "@/assets/about-2.png";
 
@@ -15,23 +16,41 @@ const AboutSection = () => {
         </div>
 
         <div className="grid md:grid-cols-2 gap-8 mb-12 max-w-6xl mx-auto">
-          <div className="overflow-hidden rounded-2xl shadow-2xl">
+          <motion.div 
+            initial={{ opacity: 0, x: -50 }}
+            whileInView={{ opacity: 1, x: 0 }}
+            viewport={{ once: true }}
+            transition={{ duration: 0.7 }}
+            className="overflow-hidden rounded-2xl shadow-2xl"
+          >
             <img 
               src={about1} 
               alt="Elder care" 
               className="w-full h-[300px] object-cover hover:scale-105 transition-transform duration-300"
             />
-          </div>
-          <div className="overflow-hidden rounded-2xl shadow-2xl">
+          </motion.div>
+          <motion.div 
+            initial={{ opacity: 0, x: 50 }}
+            whileInView={{ opacity: 1, x: 0 }}
+            viewport={{ once: true }}
+            transition={{ duration: 0.7 }}
+            className="overflow-hidden rounded-2xl shadow-2xl"
+          >
             <img 
               src={about2} 
               alt="Compassionate care" 
               className="w-full h-[300px] object-cover hover:scale-105 transition-transform duration-300"
             />
-          </div>
+          </motion.div>
         </div>
 
-        <div className="max-w-4xl mx-auto space-y-6 text-center">
+        <motion.div 
+          initial={{ opacity: 0, y: 30 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true }}
+          transition={{ duration: 0.6, delay: 0.3 }}
+          className="max-w-4xl mx-auto space-y-6 text-center"
+        >
           <p className="text-lg text-foreground leading-relaxed">
             At <span className="font-bold text-primary">ElderEase</span>, we believe every senior deserves comfort, care, and companionship. Our mission is to 
             support families in Ambiong, Baguio by providing a safe and simple digital space where their loved 
@@ -48,7 +67,7 @@ const AboutSection = () => {
             interactions while giving families the assurance that their loved ones are cared for, anytime and 
             anywhere.
           </p>
-        </div>
+        </motion.div>
       </div>
     </section>
   );

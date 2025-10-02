@@ -4,6 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Heart, Mail, Phone, MapPin, Clock } from "lucide-react";
+import { motion } from "framer-motion";
 
 const VolunteerSection = () => {
   const handleSubmit = (e: React.FormEvent) => {
@@ -29,7 +30,13 @@ const VolunteerSection = () => {
 
         <div className="grid md:grid-cols-2 gap-8 max-w-6xl mx-auto">
           {/* Contact Information Card */}
-          <Card className="bg-gradient-to-br from-primary to-primary-dark text-primary-foreground shadow-2xl border-0">
+          <motion.div
+            initial={{ opacity: 0, x: -40 }}
+            whileInView={{ opacity: 1, x: 0 }}
+            viewport={{ once: true }}
+            transition={{ duration: 0.6 }}
+          >
+            <Card className="bg-gradient-to-br from-primary to-primary-dark text-primary-foreground shadow-2xl border-0 h-full">
             <CardContent className="p-8">
               <h3 className="text-2xl font-bold mb-6">Get In Touch</h3>
               <p className="mb-8 opacity-90">
@@ -83,9 +90,16 @@ const VolunteerSection = () => {
               </div>
             </CardContent>
           </Card>
+          </motion.div>
 
           {/* Volunteer Form */}
-          <Card className="shadow-2xl">
+          <motion.div
+            initial={{ opacity: 0, x: 40 }}
+            whileInView={{ opacity: 1, x: 0 }}
+            viewport={{ once: true }}
+            transition={{ duration: 0.6 }}
+          >
+            <Card className="shadow-2xl h-full">
             <CardContent className="p-8">
               <form onSubmit={handleSubmit} className="space-y-5">
                 <div>
@@ -176,6 +190,7 @@ const VolunteerSection = () => {
               </form>
             </CardContent>
           </Card>
+          </motion.div>
         </div>
       </div>
     </section>

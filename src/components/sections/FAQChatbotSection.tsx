@@ -2,6 +2,7 @@ import { Card } from "@/components/ui/card";
 import { MessageCircle, Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { motion } from "framer-motion";
 
 const sampleChat = [
   {
@@ -48,7 +49,13 @@ const FAQChatbotSection = () => {
           </p>
         </div>
 
-        <div className="max-w-3xl mx-auto">
+        <motion.div 
+          initial={{ opacity: 0, y: 40 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true }}
+          transition={{ duration: 0.7 }}
+          className="max-w-3xl mx-auto"
+        >
           <Card className="overflow-hidden shadow-2xl border-border/50">
             {/* Chat Header */}
             <div className="bg-gradient-to-r from-primary to-primary-dark p-4 flex items-center gap-3">
@@ -117,7 +124,7 @@ const FAQChatbotSection = () => {
               </p>
             </div>
           </Card>
-        </div>
+        </motion.div>
       </div>
     </section>
   );

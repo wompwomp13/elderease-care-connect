@@ -1,6 +1,7 @@
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Quote, ArrowRight, Star } from "lucide-react";
+import { motion } from "framer-motion";
 
 const testimonials = [
   {
@@ -32,40 +33,55 @@ const TestimonialsSection = () => {
 
         <div className="grid md:grid-cols-2 gap-8 max-w-4xl mx-auto mb-12">
           {testimonials.map((testimonial, index) => (
-            <Card key={index} className="border-primary/10 shadow-xl hover:shadow-2xl transition-all hover:scale-105">
-              <CardHeader>
-                <div className="flex items-start gap-4">
-                  <div className="w-14 h-14 bg-gradient-to-br from-primary to-primary-dark rounded-full flex items-center justify-center flex-shrink-0 shadow-md">
-                    <Quote className="w-7 h-7 text-primary-foreground" />
-                  </div>
-                  <div>
-                    <h4 className="font-bold text-foreground text-lg">{testimonial.name}</h4>
-                    <div className="flex gap-1 mt-1">
-                      {[...Array(5)].map((_, i) => (
-                        <Star key={i} className="w-4 h-4 fill-primary text-primary" />
-                      ))}
+            <motion.div
+              key={index}
+              initial={{ opacity: 0, x: index % 2 === 0 ? -30 : 30 }}
+              whileInView={{ opacity: 1, x: 0 }}
+              viewport={{ once: true }}
+              transition={{ duration: 0.6, delay: index * 0.2 }}
+            >
+              <Card className="border-primary/10 shadow-xl hover:shadow-2xl transition-all hover:scale-105 h-full">
+                <CardHeader>
+                  <div className="flex items-start gap-4">
+                    <div className="w-14 h-14 bg-gradient-to-br from-primary to-primary-dark rounded-full flex items-center justify-center flex-shrink-0 shadow-md">
+                      <Quote className="w-7 h-7 text-primary-foreground" />
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-foreground text-lg">{testimonial.name}</h4>
+                      <div className="flex gap-1 mt-1">
+                        {[...Array(5)].map((_, i) => (
+                          <Star key={i} className="w-4 h-4 fill-primary text-primary" />
+                        ))}
+                      </div>
                     </div>
                   </div>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <p className="font-semibold text-foreground mb-3">{testimonial.text}</p>
-                <p className="text-sm text-muted-foreground leading-relaxed">{testimonial.fullText}</p>
-              </CardContent>
-            </Card>
+                </CardHeader>
+                <CardContent>
+                  <p className="font-semibold text-foreground mb-3">{testimonial.text}</p>
+                  <p className="text-sm text-muted-foreground leading-relaxed">{testimonial.fullText}</p>
+                </CardContent>
+              </Card>
+            </motion.div>
           ))}
           
-          <Card className="bg-gradient-to-br from-primary to-primary-dark text-primary-foreground border-none shadow-2xl hover:shadow-3xl transition-shadow">
-            <CardContent className="p-8 text-center flex flex-col justify-center h-full">
-              <h3 className="text-2xl font-bold mb-4">Share Your Experience</h3>
-              <p className="mb-6 opacity-90 text-lg">
-                Help others discover the quality care their loved ones deserve
-              </p>
-              <Button variant="secondary" size="lg" className="rounded-full mx-auto">
-                Post Testimonial <ArrowRight className="w-5 h-5 ml-2" />
-              </Button>
-            </CardContent>
-          </Card>
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9 }}
+            whileInView={{ opacity: 1, scale: 1 }}
+            viewport={{ once: true }}
+            transition={{ duration: 0.6, delay: 0.4 }}
+          >
+            <Card className="bg-gradient-to-br from-primary to-primary-dark text-primary-foreground border-none shadow-2xl hover:shadow-3xl transition-shadow h-full">
+              <CardContent className="p-8 text-center flex flex-col justify-center h-full">
+                <h3 className="text-2xl font-bold mb-4">Share Your Experience</h3>
+                <p className="mb-6 opacity-90 text-lg">
+                  Help others discover the quality care their loved ones deserve
+                </p>
+                <Button variant="secondary" size="lg" className="rounded-full mx-auto">
+                  Post Testimonial <ArrowRight className="w-5 h-5 ml-2" />
+                </Button>
+              </CardContent>
+            </Card>
+          </motion.div>
         </div>
       </div>
     </section>

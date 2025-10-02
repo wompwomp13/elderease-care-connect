@@ -1,5 +1,6 @@
 import { Card, CardContent } from "@/components/ui/card";
 import { Heart, ShoppingBag, Home, Eye, Sparkles } from "lucide-react";
+import { motion } from "framer-motion";
 
 const services = [
   {
@@ -46,18 +47,23 @@ const ServicesSection = () => {
 
         <div className="grid md:grid-cols-3 lg:grid-cols-5 gap-6 max-w-6xl mx-auto">
           {services.map((service, index) => (
-            <Card 
-              key={index} 
-              className="group hover:shadow-2xl transition-all duration-300 cursor-pointer border-primary/20 bg-card hover:scale-105 hover:border-primary/50"
+            <motion.div
+              key={index}
+              initial={{ opacity: 0, y: 50 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true }}
+              transition={{ duration: 0.5, delay: index * 0.1 }}
             >
-              <CardContent className="pt-8 pb-6">
-                <div className="w-16 h-16 bg-gradient-to-br from-primary/10 to-primary/5 rounded-2xl flex items-center justify-center mx-auto mb-4 group-hover:from-primary/20 group-hover:to-primary/10 transition-all shadow-md">
-                  <service.icon className="w-8 h-8 text-primary" />
-                </div>
-                <h4 className="font-semibold text-foreground mb-2 group-hover:text-primary transition-colors">{service.title}</h4>
-                <p className="text-sm text-muted-foreground">{service.description}</p>
-              </CardContent>
-            </Card>
+              <Card className="group hover:shadow-2xl transition-all duration-300 cursor-pointer border-primary/20 bg-card hover:scale-105 hover:border-primary/50">
+                <CardContent className="pt-8 pb-6">
+                  <div className="w-16 h-16 bg-gradient-to-br from-primary/10 to-primary/5 rounded-2xl flex items-center justify-center mx-auto mb-4 group-hover:from-primary/20 group-hover:to-primary/10 transition-all shadow-md">
+                    <service.icon className="w-8 h-8 text-primary" />
+                  </div>
+                  <h4 className="font-semibold text-foreground mb-2 group-hover:text-primary transition-colors">{service.title}</h4>
+                  <p className="text-sm text-muted-foreground">{service.description}</p>
+                </CardContent>
+              </Card>
+            </motion.div>
           ))}
         </div>
       </div>

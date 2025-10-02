@@ -2,6 +2,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Phone, Mail } from "lucide-react";
+import { motion } from "framer-motion";
 import logo from "@/assets/logo.png";
 
 const ContactSection = () => {
@@ -27,8 +28,14 @@ const ContactSection = () => {
           </p>
         </div>
 
-        <Card className="max-w-4xl mx-auto bg-card border-primary/10 shadow-2xl">
-          <CardContent className="p-8 md:p-12">
+        <motion.div
+          initial={{ opacity: 0, scale: 0.95 }}
+          whileInView={{ opacity: 1, scale: 1 }}
+          viewport={{ once: true }}
+          transition={{ duration: 0.6 }}
+        >
+          <Card className="max-w-4xl mx-auto bg-card border-primary/10 shadow-2xl">
+            <CardContent className="p-8 md:p-12">
             <div className="flex items-center gap-3 mb-8 justify-center">
               <img src={logo} alt="ElderEase" className="h-14 w-14" />
               <span className="text-2xl font-bold text-primary">ElderEase</span>
@@ -88,8 +95,9 @@ const ContactSection = () => {
                 </div>
               </div>
             </form>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        </motion.div>
       </div>
     </section>
   );

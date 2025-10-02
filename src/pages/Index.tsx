@@ -5,6 +5,7 @@ import TrustSection from "@/components/sections/TrustSection";
 import TeamSection from "@/components/sections/TeamSection";
 import TestimonialsSection from "@/components/sections/TestimonialsSection";
 import FAQChatbotSection from "@/components/sections/FAQChatbotSection";
+import NotificationsSection from "@/components/sections/NotificationsSection";
 import ContactSection from "@/components/sections/ContactSection";
 import VolunteerSection from "@/components/sections/VolunteerSection";
 import AboutSection from "@/components/sections/AboutSection";
@@ -20,6 +21,7 @@ const Index = () => {
       <TeamSection />
       <TestimonialsSection />
       <FAQChatbotSection />
+      <NotificationsSection />
       <ContactSection />
       <VolunteerSection />
       <AboutSection />
