@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import logo from "@/assets/logo.png";
+import authBg from "@/assets/auth-background.jpg";
 
 const Login = () => {
   const navigate = useNavigate();
@@ -23,10 +24,10 @@ const Login = () => {
       <div className="bg-primary flex items-center justify-center p-8">
         <Card className="w-full max-w-md bg-primary border-none shadow-none">
           <CardContent className="p-8">
-            <div className="flex items-center gap-3 mb-8">
+            <Link to="/" className="flex items-center gap-3 mb-8 hover:opacity-80 transition-opacity">
               <img src={logo} alt="ElderEase" className="h-12 w-12" />
               <span className="text-2xl font-bold text-primary-foreground">ElderEase</span>
-            </div>
+            </Link>
 
             <h1 className="text-3xl font-bold text-primary-foreground mb-2">Welcome back!</h1>
             <p className="text-primary-foreground/80 mb-8">
@@ -73,7 +74,7 @@ const Login = () => {
                 <div className="flex-1 h-px bg-primary-foreground/20"></div>
               </div>
 
-              <Button variant="outline" className="w-full border-primary-foreground/20 text-primary-foreground hover:bg-primary-foreground/10">
+              <Button variant="outline" className="w-full bg-white border-primary-foreground/20 text-foreground hover:bg-white/90">
                 <svg className="w-5 h-5 mr-2" viewBox="0 0 24 24">
                   <path fill="currentColor" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
                   <path fill="currentColor" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
@@ -97,7 +98,7 @@ const Login = () => {
       {/* Right side - Image */}
       <div className="hidden md:block relative">
         <img 
-          src="https://images.unsplash.com/photo-1505491032998-ac14041449af?w=1200&h=1200&fit=crop" 
+          src={authBg} 
           alt="Tropical leaves" 
           className="w-full h-full object-cover"
         />

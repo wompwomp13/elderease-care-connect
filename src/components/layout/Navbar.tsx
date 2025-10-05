@@ -19,7 +19,7 @@ const Navbar = () => {
           <a href="#testimonials" className="hover:opacity-80 transition-opacity">Testimonials</a>
           <a href="#contact" className="hover:opacity-80 transition-opacity">Contact</a>
           <Link to="/login">
-            <Button variant="nav" size="sm">Get Appointment</Button>
+            <Button variant="nav" size="sm">Login</Button>
           </Link>
         </div>
       </div>
