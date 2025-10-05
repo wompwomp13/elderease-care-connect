@@ -52,8 +52,8 @@ const HeroSection = () => {
             animate={{ opacity: 1, scale: 1 }}
             transition={{ duration: 0.5, delay: 0.7 }}
           >
-            <Button variant="hero" size="lg" className="rounded-full">
-              Read our facts →
+            <Button variant="hero" size="lg" className="rounded-full" asChild>
+              <a href="#team">Meet our team →</a>
             </Button>
           </motion.div>
         </motion.div>
