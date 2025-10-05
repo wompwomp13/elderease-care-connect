@@ -23,17 +23,17 @@ const Signup = () => {
   return (
     <div className="min-h-screen grid md:grid-cols-2">
       {/* Left side - Form */}
-      <div className="bg-primary flex items-center justify-center p-8">
+      <div className="bg-primary flex items-center justify-center p-6">
         <Card className="w-full max-w-md bg-primary border-none shadow-none">
-          <CardContent className="p-8">
-            <Link to="/" className="flex items-center gap-3 mb-8 hover:opacity-80 transition-opacity">
-              <img src={logo} alt="ElderEase" className="h-12 w-12" />
-              <span className="text-2xl font-bold text-primary-foreground">ElderEase</span>
+          <CardContent className="p-6">
+            <Link to="/" className="flex items-center gap-2 mb-6 hover:opacity-80 transition-opacity">
+              <img src={logo} alt="ElderEase" className="h-10 w-10" />
+              <span className="text-xl font-bold text-primary-foreground">ElderEase</span>
             </Link>
 
-            <h1 className="text-3xl font-bold text-primary-foreground mb-2">Get Started Now</h1>
+            <h1 className="text-2xl font-bold text-primary-foreground mb-6">Get Started Now</h1>
 
-            <form onSubmit={handleSubmit} className="space-y-5 mt-8">
+            <form onSubmit={handleSubmit} className="space-y-4">
               <div>
                 <label className="block text-primary-foreground text-sm mb-2">Name</label>
                 <Input 
@@ -85,13 +85,13 @@ const Signup = () => {
                 </label>
               </div>
 
-              <Button type="submit" className="w-full bg-primary-dark hover:bg-primary-dark/90 text-primary-dark-foreground" size="lg">
+              <Button type="submit" className="w-full bg-primary-dark hover:bg-primary-dark/90 text-primary-dark-foreground">
                 Signup
               </Button>
 
-              <div className="flex items-center gap-2 my-6">
+              <div className="flex items-center gap-2 my-4">
                 <div className="flex-1 h-px bg-primary-foreground/20"></div>
-                <span className="text-primary-foreground/60 text-sm">OR</span>
+                <span className="text-primary-foreground/60 text-xs">OR</span>
                 <div className="flex-1 h-px bg-primary-foreground/20"></div>
               </div>
 
@@ -105,7 +105,7 @@ const Signup = () => {
                 Sign up with Google
               </Button>
 
-              <p className="text-center text-primary-foreground/80 text-sm mt-6">
+              <p className="text-center text-primary-foreground/80 text-sm mt-4">
                 Have an account?{" "}
                 <Link to="/login" className="text-primary-foreground font-semibold underline">
                   Sign In
