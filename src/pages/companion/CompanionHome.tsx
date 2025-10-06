@@ -16,8 +16,9 @@ const CompanionNavbar = () => {
           <span className="text-lg font-bold">ElderEase Companion</span>
         </Link>
         <div className="hidden md:flex items-center gap-5" role="navigation" aria-label="Primary">
-          <button className="hover:opacity-80 transition-opacity" tabIndex={0}>Dashboard</button>
-          <button className="hover:opacity-80 transition-opacity" tabIndex={0}>My Assignments</button>
+          <Link to="/companion" className="hover:opacity-80 transition-opacity">Dashboard</Link>
+          <Link to="/companion/assignments" className="hover:opacity-80 transition-opacity">My Assignments</Link>
+          <Link to="/companion/requests" className="hover:opacity-80 transition-opacity">Find Requests</Link>
           <button className="hover:opacity-80 transition-opacity" tabIndex={0}>Activity Log</button>
           <button className="hover:opacity-80 transition-opacity" tabIndex={0}>Profile</button>
           {user ? (
@@ -57,14 +58,18 @@ const CompanionHome = () => {
                 Thank you for being a valued volunteer. Your compassion and dedication bring joy and support to our community members.
               </p>
               <div className="flex flex-wrap gap-3">
-                <Button size="lg" className="gap-2">
-                  <ClipboardList className="h-5 w-5" />
-                  View Assignments
-                </Button>
-                <Button size="lg" variant="outline" className="gap-2">
-                  <CheckCircle2 className="h-5 w-5" />
-                  Log Activity
-                </Button>
+                <Link to="/companion/assignments">
+                  <Button size="lg" className="gap-2">
+                    <ClipboardList className="h-5 w-5" />
+                    View Assignments
+                  </Button>
+                </Link>
+                <Link to="/companion/requests">
+                  <Button size="lg" variant="outline" className="gap-2">
+                    <CheckCircle2 className="h-5 w-5" />
+                    Find Requests
+                  </Button>
+                </Link>
               </div>
             </div>
             <div className="relative">

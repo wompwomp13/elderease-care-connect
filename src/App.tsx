@@ -14,6 +14,8 @@ import RequestService from "@/pages/elder/RequestService";
 import MySchedule from "@/pages/elder/MySchedule";
 import AdminHome from "@/pages/admin/AdminHome";
 import CompanionHome from "@/pages/companion/CompanionHome";
+import MyAssignments from "@/pages/companion/MyAssignments";
+import RequestsBoard from "@/pages/companion/RequestsBoard";
 
 const queryClient = new QueryClient();
 
@@ -35,6 +37,8 @@ const App = () => (
           <Route path="/elder/request-service" element={<RequestService />} />
           <Route path="/admin" element={<AdminHome />} />
           <Route path="/companion" element={<CompanionHome />} />
+          <Route path="/companion/assignments" element={<MyAssignments />} />
+          <Route path="/companion/requests" element={<RequestsBoard />} />
 
           {/* Fallback: if already logged, push to role home */}
           <Route path="/home" element={(() => {
