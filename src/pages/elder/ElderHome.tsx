@@ -3,8 +3,9 @@ import { getCurrentUser, logout } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import logo from "@/assets/logo.png";
+import companionshipImage from "@/assets/elder-companionship.jpg";
 import { useMemo, useRef, useState, useEffect } from "react";
-import { HeartHandshake, ShoppingBasket, Home, Users, Calendar, Bell, MessageSquare } from "lucide-react";
+import { HeartHandshake, ShoppingBasket, Home, Users, Calendar, Bell, MessageSquare, Sparkles, TrendingUp } from "lucide-react";
 
 const ElderNavbar = () => {
   const user = getCurrentUser();
@@ -176,127 +177,208 @@ const ChatWidget = ({ isOpen, onToggle }: { isOpen: boolean; onToggle: () => voi
 const ElderHome = () => {
   const user = useMemo(() => getCurrentUser(), []);
   const [isChatOpen, setIsChatOpen] = useState(false);
-
   const greetingName = user?.name ?? "there";
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-gradient-to-b from-background to-muted/20">
       <ElderNavbar />
-      <main className="container mx-auto px-4 py-10">
-        <div className="bg-card text-card-foreground rounded-xl p-6 shadow-sm border">
-          <h1 className="text-2xl md:text-3xl font-bold mb-2">Welcome, {greetingName}!</h1>
-          <p className="text-muted-foreground mb-6">
-            ElderEase connects you with compassionate volunteers for companionship, light housekeeping, errands,
-            home visits, and social activities—all designed to make life easier and more joyful.
-          </p>
+      
+      {/* Hero Section */}
+      <div className="relative bg-gradient-to-r from-primary/5 via-primary/10 to-primary/5 overflow-hidden">
+        <div className="container mx-auto px-4 py-16">
+          <div className="grid md:grid-cols-2 gap-8 items-center">
+            <div className="space-y-6">
+              <div className="inline-flex items-center gap-2 bg-primary/10 px-4 py-2 rounded-full">
+                <Sparkles className="h-4 w-4 text-primary" />
+                <span className="text-sm font-medium text-primary">Welcome Back!</span>
+              </div>
+              <h1 className="text-4xl md:text-5xl font-bold leading-tight">
+                Hello, <span className="text-primary">{greetingName}</span>
+              </h1>
+              <p className="text-lg text-muted-foreground">
+                Your personal companion network is here to brighten your day with friendly support, engaging activities, and helpful assistance.
+              </p>
+              <div className="flex flex-wrap gap-3">
+                <Button size="lg" className="gap-2">
+                  <Calendar className="h-5 w-5" />
+                  View Schedule
+                </Button>
+                <Button size="lg" variant="outline" className="gap-2">
+                  <HeartHandshake className="h-5 w-5" />
+                  Request Service
+                </Button>
+              </div>
+            </div>
+            <div className="relative">
+              <div className="absolute inset-0 bg-gradient-to-br from-primary/20 to-transparent rounded-3xl blur-3xl"></div>
+              <img src={companionshipImage} alt="Companionship" className="relative rounded-3xl shadow-2xl w-full h-auto" />
+            </div>
+          </div>
+        </div>
+      </div>
 
-          {/* Stats */}
-          <div className="grid sm:grid-cols-3 gap-4 mb-6">
-            <div className="p-4 rounded-lg border bg-gradient-to-br from-primary/5 to-background flex items-start justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">Upcoming Visit</p>
-                <p className="text-2xl font-bold mt-1">Today</p>
+      <main className="container mx-auto px-4 py-12">
+        {/* Stats Cards */}
+        <div className="grid sm:grid-cols-3 gap-6 mb-12">
+          <div className="bg-gradient-to-br from-primary/10 to-primary/5 p-6 rounded-2xl border border-primary/20">
+            <div className="flex items-start justify-between mb-4">
+              <div className="p-3 bg-primary/10 rounded-xl">
+                <Calendar className="h-6 w-6 text-primary" />
               </div>
-              <Calendar className="h-5 w-5 text-primary" />
+              <span className="text-xs font-medium text-primary bg-primary/10 px-2 py-1 rounded-full">Today</span>
             </div>
-            <div className="p-4 rounded-lg border bg-gradient-to-br from-primary/5 to-background flex items-start justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">New Messages</p>
-                <p className="text-2xl font-bold mt-1">1</p>
+            <h3 className="text-sm text-muted-foreground mb-1">Next Visit</h3>
+            <p className="text-2xl font-bold">3:00 PM</p>
+          </div>
+
+          <div className="bg-gradient-to-br from-blue-500/10 to-blue-500/5 p-6 rounded-2xl border border-blue-500/20">
+            <div className="flex items-start justify-between mb-4">
+              <div className="p-3 bg-blue-500/10 rounded-xl">
+                <MessageSquare className="h-6 w-6 text-blue-600" />
               </div>
-              <MessageSquare className="h-5 w-5 text-primary" />
+              <span className="inline-flex items-center justify-center w-6 h-6 text-xs font-bold text-white bg-blue-600 rounded-full">1</span>
             </div>
-            <div className="p-4 rounded-lg border bg-gradient-to-br from-primary/5 to-background flex items-start justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">Notifications</p>
-                <p className="text-2xl font-bold mt-1">2</p>
+            <h3 className="text-sm text-muted-foreground mb-1">New Messages</h3>
+            <p className="text-2xl font-bold">Unread</p>
+          </div>
+
+          <div className="bg-gradient-to-br from-green-500/10 to-green-500/5 p-6 rounded-2xl border border-green-500/20">
+            <div className="flex items-start justify-between mb-4">
+              <div className="p-3 bg-green-500/10 rounded-xl">
+                <TrendingUp className="h-6 w-6 text-green-600" />
               </div>
-              <Bell className="h-5 w-5 text-primary" />
+              <Bell className="h-5 w-5 text-green-600" />
+            </div>
+            <h3 className="text-sm text-muted-foreground mb-1">This Week</h3>
+            <p className="text-2xl font-bold">5 Activities</p>
+          </div>
+        </div>
+
+        {/* Main Content Grid */}
+        <div className="grid lg:grid-cols-3 gap-8">
+          {/* Left Column */}
+          <div className="lg:col-span-2 space-y-6">
+            {/* Upcoming Support */}
+            <div className="bg-card p-6 rounded-2xl border shadow-sm">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-xl font-bold">Your Next Support</h2>
+                <span className="text-sm font-medium text-primary">Today, 3:00 PM</span>
+              </div>
+              <div className="flex items-start gap-4 p-4 bg-gradient-to-r from-primary/5 to-transparent rounded-xl border border-primary/10">
+                <div className="h-14 w-14 rounded-full bg-primary/10 grid place-items-center flex-shrink-0">
+                  <HeartHandshake className="h-7 w-7 text-primary" />
+                </div>
+                <div className="flex-1">
+                  <h3 className="font-semibold text-lg mb-1">Friendly Companionship</h3>
+                  <p className="text-sm text-muted-foreground mb-3">Volunteer Sam • 1 hour • At your home</p>
+                  <div className="flex gap-3">
+                    <Button size="sm" className="gap-2">
+                      <Calendar className="h-4 w-4" />
+                      View Details
+                    </Button>
+                    <Button size="sm" variant="outline">Reschedule</Button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Services Grid */}
+            <div className="bg-card p-6 rounded-2xl border shadow-sm">
+              <h2 className="text-xl font-bold mb-4">Available Services</h2>
+              <div className="grid sm:grid-cols-2 gap-4">
+                <div className="group p-4 rounded-xl border bg-gradient-to-br from-background to-muted/20 hover:shadow-md transition-all cursor-pointer">
+                  <div className="flex items-center gap-3 mb-2">
+                    <div className="p-2 bg-primary/10 rounded-lg group-hover:bg-primary/20 transition-colors">
+                      <Users className="h-5 w-5 text-primary" />
+                    </div>
+                    <h3 className="font-semibold">Social Activities</h3>
+                  </div>
+                  <p className="text-sm text-muted-foreground">Join local events and group outings</p>
+                </div>
+
+                <div className="group p-4 rounded-xl border bg-gradient-to-br from-background to-muted/20 hover:shadow-md transition-all cursor-pointer">
+                  <div className="flex items-center gap-3 mb-2">
+                    <div className="p-2 bg-blue-500/10 rounded-lg group-hover:bg-blue-500/20 transition-colors">
+                      <ShoppingBasket className="h-5 w-5 text-blue-600" />
+                    </div>
+                    <h3 className="font-semibold">Grocery Assistance</h3>
+                  </div>
+                  <p className="text-sm text-muted-foreground">Help with shopping and deliveries</p>
+                </div>
+
+                <div className="group p-4 rounded-xl border bg-gradient-to-br from-background to-muted/20 hover:shadow-md transition-all cursor-pointer">
+                  <div className="flex items-center gap-3 mb-2">
+                    <div className="p-2 bg-green-500/10 rounded-lg group-hover:bg-green-500/20 transition-colors">
+                      <Home className="h-5 w-5 text-green-600" />
+                    </div>
+                    <h3 className="font-semibold">Light Housekeeping</h3>
+                  </div>
+                  <p className="text-sm text-muted-foreground">Keep your space tidy and comfortable</p>
+                </div>
+
+                <div className="group p-4 rounded-xl border bg-gradient-to-br from-background to-muted/20 hover:shadow-md transition-all cursor-pointer">
+                  <div className="flex items-center gap-3 mb-2">
+                    <div className="p-2 bg-purple-500/10 rounded-lg group-hover:bg-purple-500/20 transition-colors">
+                      <HeartHandshake className="h-5 w-5 text-purple-600" />
+                    </div>
+                    <h3 className="font-semibold">Home Visits</h3>
+                  </div>
+                  <p className="text-sm text-muted-foreground">Regular check-ins and support</p>
+                </div>
+              </div>
             </div>
           </div>
 
-          {/* Main grid */}
-          <div className="grid md:grid-cols-2 gap-4">
-            <div className="space-y-4">
-              <div className="p-4 rounded-lg border bg-background">
-                <div className="flex items-center justify-between mb-2">
-                  <h2 className="font-semibold">Your Next Support</h2>
-                  <span className="text-xs text-muted-foreground">Today, 3:00 PM</span>
-                </div>
-                <div className="flex items-center gap-3">
-                  <div className="h-10 w-10 rounded-full bg-primary/10 grid place-items-center">
-                    <HeartHandshake className="h-5 w-5 text-primary" />
-                  </div>
-                  <div className="text-sm">
-                    <p className="font-medium">Friendly Companionship</p>
-                    <p className="text-muted-foreground">Volunteer Sam • 1h • At your home</p>
-                  </div>
-                </div>
-                <div className="mt-3 flex gap-2">
-                  <Button size="sm" className="bg-primary hover:bg-primary/90" aria-label="View details">View Details</Button>
-                  <Button size="sm" variant="outline" aria-label="Reschedule">Reschedule</Button>
-                </div>
-              </div>
-
-              <div className="p-4 rounded-lg border bg-background">
-                <h2 className="font-semibold mb-3">Recommended Services</h2>
-                <div className="grid sm:grid-cols-2 gap-3">
-                  <div className="p-3 rounded-md border bg-background">
-                    <div className="flex items-center gap-2 mb-1">
-                      <Users className="h-4 w-4 text-primary" />
-                      <p className="font-medium text-sm">Social Activities</p>
-                    </div>
-                    <p className="text-xs text-muted-foreground">Join local events and group outings.</p>
-                  </div>
-                  <div className="p-3 rounded-md border bg-background">
-                    <div className="flex items-center gap-2 mb-1">
-                      <ShoppingBasket className="h-4 w-4 text-primary" />
-                      <p className="font-medium text-sm">Grocery Assistance</p>
-                    </div>
-                    <p className="text-xs text-muted-foreground">Help with shopping and deliveries.</p>
-                  </div>
-                  <div className="p-3 rounded-md border bg-background">
-                    <div className="flex items-center gap-2 mb-1">
-                      <Home className="h-4 w-4 text-primary" />
-                      <p className="font-medium text-sm">Light Housekeeping</p>
-                    </div>
-                    <p className="text-xs text-muted-foreground">Keep your space tidy and comfortable.</p>
-                  </div>
-                  <div className="p-3 rounded-md border bg-background">
-                    <div className="flex items-center gap-2 mb-1">
-                      <HeartHandshake className="h-4 w-4 text-primary" />
-                      <p className="font-medium text-sm">Home Visits</p>
-                    </div>
-                    <p className="text-xs text-muted-foreground">Regular check-ins and support at home.</p>
-                  </div>
-                </div>
+          {/* Right Column */}
+          <div className="space-y-6">
+            {/* Quick Actions */}
+            <div className="bg-card p-6 rounded-2xl border shadow-sm">
+              <h2 className="text-xl font-bold mb-4">Quick Actions</h2>
+              <div className="space-y-2">
+                <Button variant="outline" className="w-full justify-start gap-3 h-auto py-3" aria-label="Request a service">
+                  <HeartHandshake className="h-5 w-5 text-primary" />
+                  <span>Request a Service</span>
+                </Button>
+                <Button variant="outline" className="w-full justify-start gap-3 h-auto py-3" aria-label="View schedule">
+                  <Calendar className="h-5 w-5 text-blue-600" />
+                  <span>View Schedule</span>
+                </Button>
+                <Button variant="outline" className="w-full justify-start gap-3 h-auto py-3" aria-label="Check notifications">
+                  <Bell className="h-5 w-5 text-green-600" />
+                  <span>Notifications</span>
+                </Button>
+                <Button variant="outline" className="w-full justify-start gap-3 h-auto py-3" aria-label="Message companion">
+                  <MessageSquare className="h-5 w-5 text-purple-600" />
+                  <span>Message Companion</span>
+                </Button>
               </div>
             </div>
 
-            <div className="space-y-4">
-              <div className="p-4 rounded-lg border bg-background">
-                <h2 className="font-semibold mb-3">Quick Actions</h2>
-                <div className="flex flex-wrap gap-2">
-                  <Button variant="outline" size="sm" aria-label="Request a service"><HeartHandshake className="h-4 w-4 mr-2" /> Request a Service</Button>
-                  <Button variant="outline" size="sm" aria-label="View schedule"><Calendar className="h-4 w-4 mr-2" /> View Schedule</Button>
-                  <Button variant="outline" size="sm" aria-label="Check notifications"><Bell className="h-4 w-4 mr-2" /> Check Notifications</Button>
-                  <Button variant="outline" size="sm" aria-label="Message companion"><MessageSquare className="h-4 w-4 mr-2" /> Message Companion</Button>
-                </div>
+            {/* Helpful Tips */}
+            <div className="bg-gradient-to-br from-primary/5 to-primary/10 p-6 rounded-2xl border border-primary/20">
+              <div className="flex items-center gap-2 mb-4">
+                <Sparkles className="h-5 w-5 text-primary" />
+                <h2 className="text-lg font-bold">Helpful Tips</h2>
               </div>
-
-              <div className="p-4 rounded-lg border bg-background">
-                <h2 className="font-semibold mb-3">Helpful Tips</h2>
-                <ul className="list-disc pl-5 space-y-2 text-sm">
-                  <li>Prepare a short list of tasks before your volunteer arrives.</li>
-                  <li>For errands, keep your shopping list handy and up to date.</li>
-                  <li>Use the chat button anytime you have a quick question.</li>
-                </ul>
-              </div>
+              <ul className="space-y-3 text-sm">
+                <li className="flex gap-2">
+                  <span className="text-primary font-bold">•</span>
+                  <span>Prepare a short list of tasks before your volunteer arrives</span>
+                </li>
+                <li className="flex gap-2">
+                  <span className="text-primary font-bold">•</span>
+                  <span>Keep your shopping list handy and up to date</span>
+                </li>
+                <li className="flex gap-2">
+                  <span className="text-primary font-bold">•</span>
+                  <span>Use the chat button anytime you have questions</span>
+                </li>
+              </ul>
             </div>
           </div>
-
         </div>
       </main>
+
       <ChatWidget isOpen={isChatOpen} onToggle={() => setIsChatOpen((v) => !v)} />
       <ChatPanel isOpen={isChatOpen} handleClose={() => setIsChatOpen(false)} />
     </div>
