@@ -11,6 +11,7 @@ import { getCurrentUser } from "@/lib/auth";
 import ElderHome from "@/pages/elder/ElderHome";
 import AdminHome from "@/pages/admin/AdminHome";
 import CompanionHome from "@/pages/companion/CompanionHome";
+import RequestService from "@/pages/elder/RequestService";
 
 const queryClient = new QueryClient();
 
@@ -27,6 +28,7 @@ const App = () => (
 
           {/* Role sections */}
           <Route path="/elder" element={<ElderHome />} />
+          <Route path="/elder/request-service" element={<RequestService />} />
           <Route path="/admin" element={<AdminHome />} />
           <Route path="/companion" element={<CompanionHome />} />
 

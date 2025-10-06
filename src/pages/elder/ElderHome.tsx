@@ -17,11 +17,11 @@ const ElderNavbar = () => {
           <span className="text-lg font-bold">ElderEase</span>
         </Link>
         <div className="hidden md:flex items-center gap-5" role="navigation" aria-label="Primary">
-          <button className="hover:opacity-80 transition-opacity" tabIndex={0} aria-label="Home" onClick={() => {}} onKeyDown={() => {}}>Home</button>
-          <button className="hover:opacity-80 transition-opacity" tabIndex={0} aria-label="My Schedule" onClick={() => {}} onKeyDown={() => {}}>My Schedule</button>
-          <button className="hover:opacity-80 transition-opacity" tabIndex={0} aria-label="Request Service" onClick={() => {}} onKeyDown={() => {}}>Request Service</button>
-          <button className="hover:opacity-80 transition-opacity" tabIndex={0} aria-label="Notifications" onClick={() => {}} onKeyDown={() => {}}>Notifications</button>
-          <button className="hover:opacity-80 transition-opacity" tabIndex={0} aria-label="Profile" onClick={() => {}} onKeyDown={() => {}}>Profile</button>
+          <Link to="/elder" className="hover:opacity-80 transition-opacity">Home</Link>
+          <button className="hover:opacity-80 transition-opacity">My Schedule</button>
+          <Link to="/elder/request-service" className="hover:opacity-80 transition-opacity">Request Service</Link>
+          <button className="hover:opacity-80 transition-opacity">Notifications</button>
+          <button className="hover:opacity-80 transition-opacity">Profile</button>
           {user ? (
             <Button
               variant="nav"
@@ -203,10 +203,12 @@ const ElderHome = () => {
                   <Calendar className="h-5 w-5" />
                   View Schedule
                 </Button>
-                <Button size="lg" variant="outline" className="gap-2">
-                  <HeartHandshake className="h-5 w-5" />
-                  Request Service
-                </Button>
+                <Link to="/elder/request-service">
+                  <Button size="lg" variant="outline" className="gap-2">
+                    <HeartHandshake className="h-5 w-5" />
+                    Request Service
+                  </Button>
+                </Link>
               </div>
             </div>
             <div className="relative">
@@ -335,10 +337,12 @@ const ElderHome = () => {
             <div className="bg-card p-6 rounded-2xl border shadow-sm">
               <h2 className="text-xl font-bold mb-4">Quick Actions</h2>
               <div className="space-y-2">
-                <Button variant="outline" className="w-full justify-start gap-3 h-auto py-3" aria-label="Request a service">
-                  <HeartHandshake className="h-5 w-5 text-primary" />
-                  <span>Request a Service</span>
-                </Button>
+                <Link to="/elder/request-service" className="block">
+                  <Button variant="outline" className="w-full justify-start gap-3 h-auto py-3" aria-label="Request a service">
+                    <HeartHandshake className="h-5 w-5 text-primary" />
+                    <span>Request a Service</span>
+                  </Button>
+                </Link>
                 <Button variant="outline" className="w-full justify-start gap-3 h-auto py-3" aria-label="View schedule">
                   <Calendar className="h-5 w-5 text-blue-600" />
                   <span>View Schedule</span>
