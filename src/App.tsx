@@ -9,9 +9,11 @@ import Signup from "./pages/Signup";
 import NotFound from "./pages/NotFound";
 import { getCurrentUser } from "@/lib/auth";
 import ElderHome from "@/pages/elder/ElderHome";
+import ElderNotifications from "@/pages/elder/Notifications";
+import RequestService from "@/pages/elder/RequestService";
+import MySchedule from "@/pages/elder/MySchedule";
 import AdminHome from "@/pages/admin/AdminHome";
 import CompanionHome from "@/pages/companion/CompanionHome";
-import RequestService from "@/pages/elder/RequestService";
 
 const queryClient = new QueryClient();
 
@@ -28,6 +30,8 @@ const App = () => (
 
           {/* Role sections */}
           <Route path="/elder" element={<ElderHome />} />
+          <Route path="/elder/notifications" element={<ElderNotifications />} />
+          <Route path="/elder/schedule" element={<MySchedule />} />
           <Route path="/elder/request-service" element={<RequestService />} />
           <Route path="/admin" element={<AdminHome />} />
           <Route path="/companion" element={<CompanionHome />} />

@@ -22,9 +22,9 @@ const ElderNavbar = () => {
         </Link>
         <div className="hidden md:flex items-center gap-5">
           <Link to="/elder" className="hover:opacity-80 transition-opacity">Home</Link>
-          <button className="hover:opacity-80 transition-opacity">My Schedule</button>
+          <Link to="/elder/schedule" className="hover:opacity-80 transition-opacity">My Schedule</Link>
           <Link to="/elder/request-service" className="hover:opacity-80 transition-opacity font-semibold">Request Service</Link>
-          <button className="hover:opacity-80 transition-opacity">Notifications</button>
+          <Link to="/elder/notifications" className="hover:opacity-80 transition-opacity">Notifications</Link>
           <button className="hover:opacity-80 transition-opacity">Profile</button>
           {user ? (
             <Button
@@ -136,16 +136,8 @@ const RequestService = () => {
       <div className="container mx-auto px-4 py-8 max-w-5xl">
         {/* Header */}
         <div className="mb-8">
-          <Button
-            variant="ghost"
-            className="mb-4 gap-2"
-            onClick={() => navigate("/elder")}
-          >
-            <ChevronLeft className="h-4 w-4" />
-            Back to Home
-          </Button>
-          <h1 className="text-3xl md:text-4xl font-bold mb-2">Request a Service</h1>
-          <p className="text-muted-foreground">Choose services and schedule a time that works for you</p>
+          <h1 className="text-3xl md:text-4xl font-bold mb-2">Request a Service for your loved one</h1>
+          <p className="text-muted-foreground">Choose services and schedule a time that works best for them</p>
         </div>
 
         <div className="grid lg:grid-cols-2 gap-6">

@@ -16,12 +16,12 @@ const ElderNavbar = () => {
           <img src={logo} alt="ElderEase Logo" className="h-8 w-8" />
           <span className="text-lg font-bold">ElderEase</span>
         </Link>
-        <div className="hidden md:flex items-center gap-5" role="navigation" aria-label="Primary">
-          <Link to="/elder" className="hover:opacity-80 transition-opacity">Home</Link>
-          <button className="hover:opacity-80 transition-opacity">My Schedule</button>
-          <Link to="/elder/request-service" className="hover:opacity-80 transition-opacity">Request Service</Link>
-          <button className="hover:opacity-80 transition-opacity">Notifications</button>
-          <button className="hover:opacity-80 transition-opacity">Profile</button>
+         <div className="hidden md:flex items-center gap-5" role="navigation" aria-label="Primary">
+           <Link to="/elder" className="hover:opacity-80 transition-opacity">Home</Link>
+           <Link to="/elder/schedule" className="hover:opacity-80 transition-opacity">My Schedule</Link>
+           <Link to="/elder/request-service" className="hover:opacity-80 transition-opacity">Request Service</Link>
+           <Link to="/elder/notifications" className="hover:opacity-80 transition-opacity">Notifications</Link>
+           <button className="hover:opacity-80 transition-opacity">Profile</button>
           {user ? (
             <Button
               variant="nav"
@@ -190,14 +190,14 @@ const ElderHome = () => {
             <div className="space-y-6">
               <div className="inline-flex items-center gap-2 bg-primary/10 px-4 py-2 rounded-full">
                 <Sparkles className="h-4 w-4 text-primary" />
-                <span className="text-sm font-medium text-primary">Welcome Back!</span>
+               <span className="text-sm font-medium text-primary">Welcome Back, Guardian</span>
               </div>
-              <h1 className="text-4xl md:text-5xl font-bold leading-tight">
-                Hello, <span className="text-primary">{greetingName}</span>
-              </h1>
-              <p className="text-lg text-muted-foreground">
-                Your personal companion network is here to brighten your day with friendly support, engaging activities, and helpful assistance.
-              </p>
+               <h1 className="text-4xl md:text-5xl font-bold leading-tight">
+                 Hello, <span className="text-primary">{greetingName}</span>
+               </h1>
+               <p className="text-lg text-muted-foreground">
+                 You’re managing care for your loved one. Schedule visits, request services, and keep track of updates in one place.
+               </p>
               <div className="flex flex-wrap gap-3">
                 <Button size="lg" className="gap-2">
                   <Calendar className="h-5 w-5" />
@@ -229,7 +229,7 @@ const ElderHome = () => {
               </div>
               <span className="text-xs font-medium text-primary bg-primary/10 px-2 py-1 rounded-full">Today</span>
             </div>
-            <h3 className="text-sm text-muted-foreground mb-1">Next Visit</h3>
+             <h3 className="text-sm text-muted-foreground mb-1">Next Visit for your loved one</h3>
             <p className="text-2xl font-bold">3:00 PM</p>
           </div>
 
@@ -240,7 +240,7 @@ const ElderHome = () => {
               </div>
               <span className="inline-flex items-center justify-center w-6 h-6 text-xs font-bold text-white bg-blue-600 rounded-full">1</span>
             </div>
-            <h3 className="text-sm text-muted-foreground mb-1">New Messages</h3>
+             <h3 className="text-sm text-muted-foreground mb-1">New Messages (with volunteers)</h3>
             <p className="text-2xl font-bold">Unread</p>
           </div>
 
@@ -251,8 +251,8 @@ const ElderHome = () => {
               </div>
               <Bell className="h-5 w-5 text-green-600" />
             </div>
-            <h3 className="text-sm text-muted-foreground mb-1">This Week</h3>
-            <p className="text-2xl font-bold">5 Activities</p>
+             <h3 className="text-sm text-muted-foreground mb-1">This Week for your loved one</h3>
+             <p className="text-2xl font-bold">5 Activities Scheduled</p>
           </div>
         </div>
 
@@ -263,7 +263,7 @@ const ElderHome = () => {
             {/* Upcoming Support */}
             <div className="bg-card p-6 rounded-2xl border shadow-sm">
               <div className="flex items-center justify-between mb-4">
-                <h2 className="text-xl font-bold">Your Next Support</h2>
+                 <h2 className="text-xl font-bold">Next Support Visit</h2>
                 <span className="text-sm font-medium text-primary">Today, 3:00 PM</span>
               </div>
               <div className="flex items-start gap-4 p-4 bg-gradient-to-r from-primary/5 to-transparent rounded-xl border border-primary/10">
@@ -271,8 +271,8 @@ const ElderHome = () => {
                   <HeartHandshake className="h-7 w-7 text-primary" />
                 </div>
                 <div className="flex-1">
-                  <h3 className="font-semibold text-lg mb-1">Friendly Companionship</h3>
-                  <p className="text-sm text-muted-foreground mb-3">Volunteer Sam • 1 hour • At your home</p>
+                   <h3 className="font-semibold text-lg mb-1">Friendly Companionship for your loved one</h3>
+                   <p className="text-sm text-muted-foreground mb-3">Volunteer Sam • 1 hour • At their home</p>
                   <div className="flex gap-3">
                     <Button size="sm" className="gap-2">
                       <Calendar className="h-4 w-4" />
@@ -286,7 +286,7 @@ const ElderHome = () => {
 
             {/* Services Grid */}
             <div className="bg-card p-6 rounded-2xl border shadow-sm">
-              <h2 className="text-xl font-bold mb-4">Available Services</h2>
+               <h2 className="text-xl font-bold mb-4">Services for your loved one</h2>
               <div className="grid sm:grid-cols-2 gap-4">
                 <div className="group p-4 rounded-xl border bg-gradient-to-br from-background to-muted/20 hover:shadow-md transition-all cursor-pointer">
                   <div className="flex items-center gap-3 mb-2">
@@ -335,25 +335,25 @@ const ElderHome = () => {
           <div className="space-y-6">
             {/* Quick Actions */}
             <div className="bg-card p-6 rounded-2xl border shadow-sm">
-              <h2 className="text-xl font-bold mb-4">Quick Actions</h2>
+                 <h2 className="text-xl font-bold mb-4">Quick Actions</h2>
               <div className="space-y-2">
                 <Link to="/elder/request-service" className="block">
                   <Button variant="outline" className="w-full justify-start gap-3 h-auto py-3" aria-label="Request a service">
                     <HeartHandshake className="h-5 w-5 text-primary" />
-                    <span>Request a Service</span>
+                   <span>Request a Service</span>
                   </Button>
                 </Link>
                 <Button variant="outline" className="w-full justify-start gap-3 h-auto py-3" aria-label="View schedule">
                   <Calendar className="h-5 w-5 text-blue-600" />
-                  <span>View Schedule</span>
+                   <span>View Schedule</span>
                 </Button>
                 <Button variant="outline" className="w-full justify-start gap-3 h-auto py-3" aria-label="Check notifications">
                   <Bell className="h-5 w-5 text-green-600" />
-                  <span>Notifications</span>
+                   <span>Notifications</span>
                 </Button>
                 <Button variant="outline" className="w-full justify-start gap-3 h-auto py-3" aria-label="Message companion">
                   <MessageSquare className="h-5 w-5 text-purple-600" />
-                  <span>Message Companion</span>
+                   <span>Message Volunteer</span>
                 </Button>
               </div>
             </div>
@@ -362,16 +362,16 @@ const ElderHome = () => {
             <div className="bg-gradient-to-br from-primary/5 to-primary/10 p-6 rounded-2xl border border-primary/20">
               <div className="flex items-center gap-2 mb-4">
                 <Sparkles className="h-5 w-5 text-primary" />
-                <h2 className="text-lg font-bold">Helpful Tips</h2>
+                 <h2 className="text-lg font-bold">Helpful Tips for Guardians</h2>
               </div>
               <ul className="space-y-3 text-sm">
                 <li className="flex gap-2">
                   <span className="text-primary font-bold">•</span>
-                  <span>Prepare a short list of tasks before your volunteer arrives</span>
+                   <span>Prepare a short list of tasks your loved one needs help with</span>
                 </li>
                 <li className="flex gap-2">
                   <span className="text-primary font-bold">•</span>
-                  <span>Keep your shopping list handy and up to date</span>
+                   <span>Keep their shopping list handy and up to date</span>
                 </li>
                 <li className="flex gap-2">
                   <span className="text-primary font-bold">•</span>
