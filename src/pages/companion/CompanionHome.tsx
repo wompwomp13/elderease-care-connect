@@ -1,4 +1,4 @@
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { logout, getCurrentUser } from "@/lib/auth";
 import logo from "@/assets/logo.png";
@@ -8,17 +8,19 @@ import { Calendar, ClipboardList, Clock, UserCheck, CheckCircle2, Bell, MapPin, 
 
 const CompanionNavbar = () => {
   const user = getCurrentUser();
+  const location = useLocation();
+  const isActive = (path: string) => location.pathname === path;
   return (
-    <nav className="bg-primary text-primary-foreground py-3 px-4 sticky top-0 z-50 shadow-md">
-      <div className="container mx-auto flex items-center justify-between">
+    <nav className="bg-primary text-primary-foreground sticky top-0 z-50 shadow-md">
+      <div className="container mx-auto h-16 px-4 flex items-center justify-between">
         <Link to="/companion" className="flex items-center gap-2" aria-label="ElderEase Companion Home" tabIndex={0}>
           <img src={logo} alt="ElderEase Logo" className="h-8 w-8" />
           <span className="text-lg font-bold">ElderEase Companion</span>
         </Link>
         <div className="hidden md:flex items-center gap-5" role="navigation" aria-label="Primary">
-          <Link to="/companion" className="hover:opacity-80 transition-opacity">Dashboard</Link>
-          <Link to="/companion/assignments" className="hover:opacity-80 transition-opacity">My Assignments</Link>
-          <Link to="/companion/requests" className="hover:opacity-80 transition-opacity">Find Requests</Link>
+          <Link to="/companion" className={`transition-opacity ${isActive("/companion") ? "font-semibold underline underline-offset-8 opacity-100" : "opacity-90 hover:opacity-100"}`}>Dashboard</Link>
+          <Link to="/companion/assignments" className={`transition-opacity ${isActive("/companion/assignments") ? "font-semibold underline underline-offset-8 opacity-100" : "opacity-90 hover:opacity-100"}`}>My Assignments</Link>
+          <Link to="/companion/requests" className={`transition-opacity ${isActive("/companion/requests") ? "font-semibold underline underline-offset-8 opacity-100" : "opacity-90 hover:opacity-100"}`}>Find Requests</Link>
           <button className="hover:opacity-80 transition-opacity" tabIndex={0}>Activity Log</button>
           <button className="hover:opacity-80 transition-opacity" tabIndex={0}>Profile</button>
           {user ? (

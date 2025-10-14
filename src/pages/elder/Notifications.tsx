@@ -1,4 +1,4 @@
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { getCurrentUser, logout } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import logo from "@/assets/logo.png";
@@ -6,18 +6,20 @@ import { Bell, Calendar, HeartHandshake, ShoppingBasket, Home, Users, MessageSqu
 
 const ElderNavbar = () => {
   const user = getCurrentUser();
+  const location = useLocation();
+  const isActive = (path: string) => location.pathname === path;
   return (
-    <nav className="bg-primary text-primary-foreground py-3 px-4 sticky top-0 z-50 shadow-md">
-      <div className="container mx-auto flex items-center justify-between">
+    <nav className="bg-primary text-primary-foreground sticky top-0 z-50 shadow-md">
+      <div className="container mx-auto h-16 px-4 flex items-center justify-between">
         <Link to="/elder" className="flex items-center gap-2" aria-label="ElderEase Home" tabIndex={0}>
           <img src={logo} alt="ElderEase Logo" className="h-8 w-8" />
           <span className="text-lg font-bold">ElderEase</span>
         </Link>
         <div className="hidden md:flex items-center gap-5" role="navigation" aria-label="Primary">
-          <Link to="/elder" className="hover:opacity-80 transition-opacity">Home</Link>
-          <Link to="/elder/schedule" className="hover:opacity-80 transition-opacity">My Schedule</Link>
-          <Link to="/elder/request-service" className="hover:opacity-80 transition-opacity">Request Service</Link>
-          <Link to="/elder/notifications" className="hover:opacity-80 transition-opacity font-semibold">Notifications</Link>
+          <Link to="/elder" className={`transition-opacity ${isActive("/elder") ? "font-semibold underline underline-offset-8 opacity-100" : "opacity-90 hover:opacity-100"}`}>Home</Link>
+          <Link to="/elder/schedule" className={`transition-opacity ${isActive("/elder/schedule") ? "font-semibold underline underline-offset-8 opacity-100" : "opacity-90 hover:opacity-100"}`}>My Schedule</Link>
+          <Link to="/elder/request-service" className={`transition-opacity ${isActive("/elder/request-service") ? "font-semibold underline underline-offset-8 opacity-100" : "opacity-90 hover:opacity-100"}`}>Request Service</Link>
+          <Link to="/elder/notifications" className={`transition-opacity ${isActive("/elder/notifications") ? "font-semibold underline underline-offset-8 opacity-100" : "opacity-90 hover:opacity-100"}`}>Notifications</Link>
           <button className="hover:opacity-80 transition-opacity">Profile</button>
           {user ? (
             <Button variant="nav" size="sm" onClick={() => { logout(); window.location.href = "/"; }} aria-label="Log out">Logout</Button>
