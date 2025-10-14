@@ -12,7 +12,11 @@ import ElderHome from "@/pages/elder/ElderHome";
 import ElderNotifications from "@/pages/elder/Notifications";
 import RequestService from "@/pages/elder/RequestService";
 import MySchedule from "@/pages/elder/MySchedule";
-import AdminHome from "@/pages/admin/AdminHome";
+import Dashboard from "@/pages/admin/Dashboard";
+import VolunteerApplications from "@/pages/admin/VolunteerApplications";
+import ServiceRequests from "@/pages/admin/ServiceRequests";
+import ChatbotLogs from "@/pages/admin/ChatbotLogs";
+import ContentManagement from "@/pages/admin/ContentManagement";
 import CompanionHome from "@/pages/companion/CompanionHome";
 import MyAssignments from "@/pages/companion/MyAssignments";
 import RequestsBoard from "@/pages/companion/RequestsBoard";
@@ -35,7 +39,11 @@ const App = () => (
           <Route path="/elder/notifications" element={<ElderNotifications />} />
           <Route path="/elder/schedule" element={<MySchedule />} />
           <Route path="/elder/request-service" element={<RequestService />} />
-          <Route path="/admin" element={<AdminHome />} />
+          <Route path="/admin" element={<Dashboard />} />
+          <Route path="/admin/applications" element={<VolunteerApplications />} />
+          <Route path="/admin/requests" element={<ServiceRequests />} />
+          <Route path="/admin/chatbot" element={<ChatbotLogs />} />
+          <Route path="/admin/content" element={<ContentManagement />} />
           <Route path="/companion" element={<CompanionHome />} />
           <Route path="/companion/assignments" element={<MyAssignments />} />
           <Route path="/companion/requests" element={<RequestsBoard />} />
