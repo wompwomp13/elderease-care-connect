@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import logo from "@/assets/logo.png";
 import { ChevronLeft, HeartHandshake, Home, ShoppingBasket, Users, Calendar as CalendarIcon, Check } from "lucide-react";
@@ -98,6 +99,9 @@ const RequestService = () => {
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(new Date());
   const [selectedTime, setSelectedTime] = useState<string>("");
   const [additionalNotes, setAdditionalNotes] = useState("");
+  const [clientName, setClientName] = useState("");
+  const [clientAge, setClientAge] = useState("");
+  const [clientAddress, setClientAddress] = useState("");
 
   const toggleService = (serviceId: string) => {
     setSelectedServices(prev =>
@@ -108,6 +112,13 @@ const RequestService = () => {
   };
 
   const handleSubmit = () => {
+    if (!clientName.trim() || !clientAge.trim() || !clientAddress.trim()) {
+      toast({
+        title: "Please fill in all client information",
+        variant: "destructive"
+      });
+      return;
+    }
     if (selectedServices.length === 0) {
       toast({
         title: "Please select at least one service",
@@ -123,12 +134,17 @@ const RequestService = () => {
       return;
     }
 
-    toast({
-      title: "Service Request Submitted!",
-      description: `Your request for ${format(selectedDate, "PPP")} at ${selectedTime} has been received.`
+    // Navigate to payment confirmation with request data
+    navigate("/elder/payment-confirmation", {
+      state: {
+        name: clientName,
+        age: clientAge,
+        address: clientAddress,
+        services: selectedServices.map(id => services.find(s => s.id === id)?.name).join(", "),
+        date: format(selectedDate, "PPP"),
+        time: selectedTime
+      }
     });
-    
-    setTimeout(() => navigate("/elder"), 1500);
   };
 
   return (
@@ -145,6 +161,48 @@ const RequestService = () => {
         <div className="grid lg:grid-cols-2 gap-6">
           {/* Left Column - Service Selection */}
           <div className="space-y-6">
+            {/* Client Information */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Client Information</CardTitle>
+                <CardDescription>Please provide details about who will receive the service</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div>
+                  <Label htmlFor="clientName">Full Name *</Label>
+                  <Input
+                    id="clientName"
+                    placeholder="Enter full name"
+                    value={clientName}
+                    onChange={(e) => setClientName(e.target.value)}
+                    className="mt-1.5"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="clientAge">Age of Senior *</Label>
+                  <Input
+                    id="clientAge"
+                    type="number"
+                    placeholder="Enter age"
+                    value={clientAge}
+                    onChange={(e) => setClientAge(e.target.value)}
+                    className="mt-1.5"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="clientAddress">Address *</Label>
+                  <Textarea
+                    id="clientAddress"
+                    placeholder="Enter full address including city and zip code"
+                    value={clientAddress}
+                    onChange={(e) => setClientAddress(e.target.value)}
+                    rows={3}
+                    className="mt-1.5"
+                  />
+                </div>
+              </CardContent>
+            </Card>
+
             <Card>
               <CardHeader>
                 <CardTitle>Select Services</CardTitle>

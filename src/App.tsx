@@ -11,6 +11,9 @@ import { getCurrentUser } from "@/lib/auth";
 import ElderHome from "@/pages/elder/ElderHome";
 import ElderNotifications from "@/pages/elder/Notifications";
 import RequestService from "@/pages/elder/RequestService";
+import ServicesInfo from "@/pages/elder/ServicesInfo";
+import BrowseServices from "@/pages/elder/BrowseServices";
+import PaymentConfirmation from "@/pages/elder/PaymentConfirmation";
 import MySchedule from "@/pages/elder/MySchedule";
 import Dashboard from "@/pages/admin/Dashboard";
 import VolunteerApplications from "@/pages/admin/VolunteerApplications";
@@ -39,6 +42,9 @@ const App = () => (
           <Route path="/elder/notifications" element={<ElderNotifications />} />
           <Route path="/elder/schedule" element={<MySchedule />} />
           <Route path="/elder/request-service" element={<RequestService />} />
+          <Route path="/elder/services-info" element={<ServicesInfo />} />
+          <Route path="/elder/browse-services" element={<BrowseServices />} />
+          <Route path="/elder/payment-confirmation" element={<PaymentConfirmation />} />
           <Route path="/admin" element={<Dashboard />} />
           <Route path="/admin/applications" element={<VolunteerApplications />} />
           <Route path="/admin/requests" element={<ServiceRequests />} />
