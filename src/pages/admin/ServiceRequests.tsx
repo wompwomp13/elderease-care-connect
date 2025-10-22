@@ -2,12 +2,13 @@ import AdminLayout from "@/components/layout/AdminLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Calendar, Clock, MapPin, User, Inbox, Loader2, Star, BarChart3, UserCircle } from "lucide-react";
+import { Calendar, Clock, MapPin, User, Inbox, Loader2, Star, BarChart3 } from "lucide-react";
+import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious } from "@/components/ui/carousel";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { useEffect, useMemo, useState } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { db } from "@/lib/firebase";
 import { collection, doc, onSnapshot, orderBy, query, updateDoc, where } from "firebase/firestore";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from "@/components/ui/dialog";
 
 const ServiceRequests = () => {
   const { toast } = useToast();
@@ -51,6 +52,14 @@ const ServiceRequests = () => {
     });
     // Prioritize by rating (desc), then tasksCompleted (desc)
     return matched.sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0) || (b.tasksCompleted ?? 0) - (a.tasksCompleted ?? 0));
+  };
+
+  const chunkList = (arr: any[], size: number) => {
+    const pages: any[][] = [];
+    for (let i = 0; i < arr.length; i += size) {
+      pages.push(arr.slice(i, i + size));
+    }
+    return pages;
   };
 
   const renderStars = (ratingNum: number) => {
@@ -162,86 +171,123 @@ const ServiceRequests = () => {
                       <label className="text-sm font-medium">Suggested Volunteers</label>
                       <span className="text-xs text-muted-foreground">Sorted by rating and relevance</span>
                     </div>
-                    <div className="flex gap-4 overflow-x-auto snap-x snap-mandatory pb-1">
-                      {getCompatibleVolunteers(request).map((v) => {
-                        const rating = v.rating ?? 4.0;
-                        const tasks = v.tasksCompleted ?? 0;
-                        return (
-                          <div key={v.id} className="min-w-[280px] md:min-w-[320px] snap-start border rounded-2xl bg-background shadow-sm">
-                            <div className="p-4">
-                              <div className="flex items-start justify-between">
-                                <div className="flex items-center gap-3">
-                                  <div className="h-10 w-10 rounded-full bg-muted grid place-items-center">
-                                    <UserCircle className="h-6 w-6 text-muted-foreground" />
-                                  </div>
-                                  <div>
-                                    <p className="font-semibold leading-tight">{v.fullName}</p>
-                                    <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Volunteer</p>
-                                  </div>
-                                </div>
-                                <div className="text-right">
-                                  {renderStars(rating)}
-                                  <p className="text-xs text-muted-foreground mt-0.5">{rating.toFixed(1)} rating</p>
-                                </div>
-                              </div>
-
-                              <p className="mt-3 text-sm text-foreground">
-                                {(v.bio || `Experienced in ${Array.isArray(v.services) ? v.services.slice(0,3).join(", ") : "care"}.`).toString()}
-                              </p>
-
-                              <div className="mt-3 flex flex-wrap gap-1">
-                                {(v.services || []).map((s: string) => (
-                                  <Badge key={s} variant="secondary" className="capitalize">{s.replace("_", " ")}</Badge>
-                                ))}
-                              </div>
-
-                              <div className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
-                                <BarChart3 className="h-3.5 w-3.5" />
-                                <span>{tasks} tasks completed</span>
-                              </div>
-                            </div>
-
-                            <div className="flex items-center justify-between border-t px-4 py-3">
-                              <Dialog>
-                                <DialogTrigger asChild>
-                                  <button className="text-sm text-primary hover:underline">Read more</button>
-                                </DialogTrigger>
-                                <DialogContent>
-                                  <DialogHeader>
-                                    <DialogTitle>{v.fullName}</DialogTitle>
-                                    <DialogDescription>{v.email}</DialogDescription>
-                                  </DialogHeader>
-                                  <div className="space-y-2 text-sm">
-                                    <div className="flex items-center justify-between">
-                                      {renderStars(rating)}
-                                      <span className="text-xs text-muted-foreground">{tasks} tasks completed</span>
-                                    </div>
-                                    <div>
-                                      <p className="font-medium">Services</p>
-                                      <div className="mt-1 flex flex-wrap gap-1">
-                                        {(v.services || []).map((s: string) => (
-                                          <Badge key={s} variant="secondary" className="capitalize">{s.replace("_", " ")}</Badge>
-                                        ))}
-                                      </div>
-                                    </div>
-                                    {v.bio && (
-                                      <div>
-                                        <p className="font-medium">About</p>
-                                        <p className="text-muted-foreground">{v.bio}</p>
-                                      </div>
-                                    )}
-                                  </div>
-                                </DialogContent>
-                              </Dialog>
-                              <Button size="sm" onClick={() => handleAssign(request.id, v.fullName)}>Assign</Button>
-                            </div>
-                          </div>
-                        );
-                      })}
-                      {getCompatibleVolunteers(request).length === 0 && (
-                        <div className="col-span-full text-sm text-muted-foreground">No matching volunteers found.</div>
-                      )}
+                    {(() => {
+                      const compatible = getCompatibleVolunteers(request);
+                      if (compatible.length === 0) {
+                        return <div className="text-sm text-muted-foreground">No matching volunteers found.</div>;
+                      }
+                      const pages = chunkList(compatible, 3);
+                      return (
+                        <div className="relative rounded-2xl bg-gradient-to-r from-primary/5 via-background to-primary/5 p-5">
+                          <Carousel className="px-8 md:px-10">
+                            <CarouselContent>
+                              {pages.map((page, idx) => (
+                                <CarouselItem key={idx}>
+                                  <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
+                                    {page.map((v) => {
+                                      const rating = v.rating ?? 4.0;
+                                      const tasks = v.tasksCompleted ?? 0;
+                                      const volServiceIds: string[] = Array.isArray(v.services) ? v.services.map((s: string) => toServiceId(s)) : [];
+                                      const reqServiceIds: string[] = Array.isArray(request.services)
+                                        ? request.services.map((s: string) => toServiceId(s))
+                                        : request.service ? [toServiceId(request.service)] : [];
+                                      const matches = reqServiceIds.filter((id: string) => volServiceIds.includes(id));
+                                      const matchPct = reqServiceIds.length ? Math.round((matches.length / reqServiceIds.length) * 100) : 0;
+                                      return (
+                                        <div key={v.id} className="rounded-2xl border bg-card/70 backdrop-blur shadow-sm hover:shadow-md transition-shadow overflow-hidden">
+                                          <div className="p-5">
+                                            <div className="flex items-start justify-between mb-3">
+                                              <div className="flex items-center gap-3">
+                                                <div className="h-12 w-12 rounded-full bg-muted grid place-items-center">
+                                                  <User className="h-6 w-6 text-muted-foreground" />
+                                                </div>
+                                                <div className="min-w-0">
+                                                  <p className="font-semibold leading-tight truncate">{v.fullName}</p>
+                                                  <p className="text-[10px] uppercase tracking-wider text-primary/70 font-medium">Volunteer</p>
+                                                </div>
+                                              </div>
+                                              <div className="text-right">
+                                                {renderStars(rating)}
+                                                <p className="text-xs text-muted-foreground mt-0.5">{rating.toFixed(1)} rating</p>
+                                              </div>
+                                            </div>
+                                            <p className="text-sm text-muted-foreground mb-3 line-clamp-2 min-h-[2.5rem]">
+                                              {(v.bio || `Experienced in ${Array.isArray(v.services) ? v.services.slice(0,2).join(" and ") : "care"} services.`).toString()}
+                                            </p>
+                                            <div className="flex flex-wrap gap-1.5 mb-3">
+                                              {(v.services || []).slice(0, 3).map((s: string) => (
+                                                <Badge key={s} variant="outline" className="capitalize text-xs">
+                                                  {s.replace("_", " ")}
+                                                </Badge>
+                                              ))}
+                                            </div>
+                                            <div className="flex items-center gap-3 text-xs text-muted-foreground pb-4 border-b">
+                                              <div className="flex items-center gap-1">
+                                                <BarChart3 className="h-4 w-4" />
+                                                <span>{tasks} tasks</span>
+                                              </div>
+                                              <span className="inline-block h-1 w-1 rounded-full bg-muted-foreground/50" />
+                                              <span>{matchPct}% match • {matches.map((m) => m[0]?.toUpperCase() + m.slice(1)).join(", ") || "No match"}</span>
+                                            </div>
+                                          </div>
+                                          <div className="flex items-center justify-between px-5 py-3 bg-muted/30">
+                                            <Dialog>
+                                              <DialogTrigger asChild>
+                                                <button className="text-sm text-primary hover:underline font-medium">Read more</button>
+                                              </DialogTrigger>
+                                              <DialogContent className="max-w-md">
+                                                <DialogHeader>
+                                                  <DialogTitle>{v.fullName}</DialogTitle>
+                                                </DialogHeader>
+                                                <div className="space-y-3 text-sm text-muted-foreground">
+                                                  <div className="flex items-center gap-2">
+                                                    <User className="h-4 w-4" />
+                                                    <span>{v.email || "Email not provided"}</span>
+                                                  </div>
+                                                  <div className="flex items-center gap-2">
+                                                    <span className="font-medium">Phone:</span>
+                                                    <span>{v.phone || "Phone not provided"}</span>
+                                                  </div>
+                                                  <div className="flex items-center gap-2">
+                                                    <span className="font-medium">Rating:</span>
+                                                    <span>{rating.toFixed(1)}</span>
+                                                  </div>
+                                                  <div className="flex items-center gap-2">
+                                                    <span className="font-medium">Tasks completed:</span>
+                                                    <span>{tasks}</span>
+                                                  </div>
+                                                  <div>
+                                                    <p className="font-medium text-foreground mb-1">Services</p>
+                                                    <div className="flex flex-wrap gap-1.5">
+                                                      {(v.services || []).map((s: string) => (
+                                                        <Badge key={s} variant="secondary" className="capitalize">{s.replace("_", " ")}</Badge>
+                                                      ))}
+                                                    </div>
+                                                  </div>
+                                                  {v.bio && (
+                                                    <div>
+                                                      <p className="font-medium text-foreground mb-1">About</p>
+                                                      <p>{v.bio}</p>
+                                                    </div>
+                                                  )}
+                                                </div>
+                                              </DialogContent>
+                                            </Dialog>
+                                            <Button onClick={() => handleAssign(request.id, v.fullName)}>Assign</Button>
                     </div>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </CarouselItem>
+                              ))}
+                            </CarouselContent>
+                            <CarouselPrevious className="left-2 top-1/2 -translate-y-1/2 bg-background/90 shadow border" />
+                            <CarouselNext className="right-2 top-1/2 -translate-y-1/2 bg-background/90 shadow border" />
+                          </Carousel>
+                        </div>
+                      );
+                    })()}
                   </div>
                 )}
               </CardContent>
