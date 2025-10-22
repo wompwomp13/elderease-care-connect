@@ -6,24 +6,29 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import logo from "@/assets/logo.png";
 import authBg from "@/assets/auth-background.jpg";
-import { loginWithCredentials, requireRoleRedirectPath, getAllFakeUsers } from "@/lib/auth";
+import { loginWithEmail, requireRoleRedirectPath } from "@/lib/auth";
 
 const Login = () => {
   const navigate = useNavigate();
-  const [username, setUsername] = useState("");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    const user = loginWithCredentials(username.trim(), password);
-    if (!user) {
-      setError("Invalid credentials. Use one of the demo accounts below.");
-      return;
+    try {
+      const profile = await loginWithEmail(email.trim(), password);
+      const redirectTo = requireRoleRedirectPath(profile.role);
+      navigate(redirectTo);
+    } catch (err: any) {
+      const code = String(err?.code || "");
+      if (code.includes("auth/invalid-credential") || code.includes("auth/wrong-password") || code.includes("auth/user-not-found")) {
+        setError("Incorrect email or password. Please try again.");
+      } else {
+        setError(err?.message || "Login failed. Please try again.");
+      }
     }
-    const redirectTo = requireRoleRedirectPath(user.role);
-    navigate(redirectTo);
   };
 
   return (
@@ -44,20 +49,20 @@ const Login = () => {
 
             <form onSubmit={handleSubmit} className="space-y-4">
               {error && (
-                <div className="text-red-100 bg-red-500/20 border border-red-500/30 rounded px-3 py-2 text-sm" role="alert">
-                  {error}
+                <div className="rounded-xl border border-amber-300/40 bg-amber-50 text-amber-900 p-3 text-sm shadow-sm" role="alert">
+                  <p className="font-medium">{error}</p>
                 </div>
               )}
 
               <div>
-                <label className="block text-primary-foreground text-sm mb-2">Username</label>
+                <label className="block text-primary-foreground text-sm mb-2">Email</label>
                 <Input 
-                  type="text" 
-                  placeholder="Enter your username"
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
+                  type="email" 
+                  placeholder="Enter your email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
                   className="bg-primary-foreground/10 border-primary-foreground/20 text-primary-foreground placeholder:text-primary-foreground/50"
-                  aria-label="Username"
+                  aria-label="Email"
                 />
               </div>
 
@@ -84,23 +89,15 @@ const Login = () => {
                 Login
               </Button>
 
-              <div className="rounded-md bg-primary-foreground/5 p-3 border border-primary-foreground/10" aria-live="polite">
-                <p className="text-xs text-primary-foreground/80 mb-1">Demo accounts:</p>
-                <ul className="text-xs text-primary-foreground/90 space-y-1 list-disc pl-4">
-                  {getAllFakeUsers().map((u) => (
-                    <li key={u.id}>
-                      <span className="font-semibold">{u.role}</span>: <span className="font-mono">{u.username}</span> / <span className="font-mono">{u.password}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
+              
 
-              <p className="text-center text-primary-foreground/80 text-sm mt-4">
-                Don't have an account?{" "}
-                <Link to="/signup" className="text-primary-foreground font-semibold underline">
-                  Sign Up
-                </Link>
-              </p>
+              <div className="text-center text-primary-foreground/80 text-sm mt-4 space-y-2">
+                <p>Don't have an account?</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <Link to="/signup" className="underline font-semibold">Sign Up as Elder/Guardian</Link>
+                  <Link to="/signup/volunteer" className="underline font-semibold">Sign Up as Volunteer</Link>
+                </div>
+              </div>
             </form>
           </CardContent>
         </Card>

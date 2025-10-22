@@ -3,13 +3,57 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { Heart, Mail, Phone, MapPin, Clock } from "lucide-react";
+import { Heart, Mail, Phone, MapPin, Clock, Users, Home, ShoppingBasket, HeartHandshake, Upload, Check } from "lucide-react";
 import { motion } from "framer-motion";
+import { useState } from "react";
+import { db } from "@/lib/firebase";
+import { addDoc, collection, serverTimestamp } from "firebase/firestore";
+import { toast } from "@/hooks/use-toast";
+
+const SERVICES = [
+  { id: "companionship", name: "Companionship", description: "Friendly support and conversation for daily comfort", icon: HeartHandshake },
+  { id: "housekeeping", name: "Light Housekeeping", description: "Help maintaining a clean and comfortable home", icon: Home },
+  { id: "errands", name: "Running Errands", description: "Assistance with shopping and daily tasks", icon: ShoppingBasket },
+  { id: "visits", name: "Home Visits", description: "Regular check-ins and support at home", icon: Users },
+  { id: "socialization", name: "Socialization", description: "Activities and outings for social engagement", icon: Users },
+];
 
 const VolunteerSection = () => {
-  const handleSubmit = (e: React.FormEvent) => {
+  const [fullName, setFullName] = useState("");
+  const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
+  const [address, setAddress] = useState("");
+  const [message, setMessage] = useState("");
+  const [selectedServices, setSelectedServices] = useState<string[]>([]);
+  const [idPreviewName, setIdPreviewName] = useState<string | null>(null); // placeholder, not uploaded
+
+  const toggleService = (id: string) => {
+    setSelectedServices((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    alert("Thank you for your interest in volunteering! We'll be in touch soon.");
+    if (!fullName.trim() || !email.trim() || !phone.trim() || !address.trim() || selectedServices.length === 0) {
+      toast({ title: "Please complete all required fields and select at least one service.", variant: "destructive" });
+      return;
+    }
+    try {
+      await addDoc(collection(db, "pendingVolunteers"), {
+        fullName: fullName.trim(),
+        email: email.trim().toLowerCase(),
+        phone: phone.trim(),
+        address: address.trim(),
+        services: selectedServices,
+        message: message.trim(),
+        idFileName: idPreviewName, // placeholder only; file is not uploaded yet
+        status: "pending",
+        createdAt: serverTimestamp(),
+      });
+      toast({ title: "Application submitted!", description: "Our admin team will review your details and contact you soon." });
+      setFullName(""); setEmail(""); setPhone(""); setAddress(""); setMessage(""); setSelectedServices([]); setIdPreviewName(null);
+    } catch (err: any) {
+      toast({ title: "Submission failed", description: err?.message ?? "Please try again later.", variant: "destructive" });
+    }
   };
 
   return (
@@ -111,6 +155,8 @@ const VolunteerSection = () => {
                     type="text"
                     placeholder="John Doe"
                     required
+                    value={fullName}
+                    onChange={(e) => setFullName(e.target.value)}
                     className="mt-1.5"
                   />
                 </div>
@@ -124,6 +170,8 @@ const VolunteerSection = () => {
                     type="email"
                     placeholder="john@example.com"
                     required
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
                     className="mt-1.5"
                   />
                 </div>
@@ -137,21 +185,54 @@ const VolunteerSection = () => {
                     type="tel"
                     placeholder="(555) 123-4567"
                     required
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
                     className="mt-1.5"
                   />
                 </div>
 
                 <div>
-                  <Label htmlFor="service" className="text-sm font-semibold text-foreground">
-                    Service You Want to Help With *
+                  <Label className="text-sm font-semibold text-foreground">
+                    Services You Want to Help With *
                   </Label>
-                  <Input
-                    id="service"
-                    type="text"
-                    placeholder="e.g., Companionship, Transportation, Meal Prep"
-                    required
-                    className="mt-1.5"
-                  />
+                  <div className="mt-2 grid sm:grid-cols-2 gap-2">
+                    {SERVICES.map((s) => {
+                      const Icon = s.icon;
+                      const checked = selectedServices.includes(s.id);
+                      const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          toggleService(s.id);
+                        }
+                      };
+                      return (
+                        <div
+                          key={s.id}
+                          onClick={() => toggleService(s.id)}
+                          onKeyDown={handleKeyDown}
+                          role="checkbox"
+                          aria-checked={checked}
+                          tabIndex={0}
+                          className={`w-full p-3 rounded-lg border text-left flex items-start gap-3 cursor-pointer ${checked ? "border-primary bg-primary/5" : "border-border hover:bg-muted"}`}
+                          aria-label={`Toggle ${s.name}`}
+                        >
+                          <span
+                            aria-hidden
+                            className={`h-4 w-4 rounded-sm border border-primary grid place-items-center mt-0.5 ${checked ? "bg-primary text-primary-foreground" : "bg-transparent"}`}
+                          >
+                            {checked ? <Check className="h-3 w-3" /> : null}
+                          </span>
+                          <div className="p-2 rounded-md bg-muted">
+                            <Icon className="h-4 w-4 text-muted-foreground" />
+                          </div>
+                          <div>
+                            <p className="font-medium leading-none mb-1">{s.name}</p>
+                            <p className="text-xs text-muted-foreground">{s.description}</p>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
 
                 <div>
@@ -163,6 +244,8 @@ const VolunteerSection = () => {
                     type="text"
                     placeholder="Your full address"
                     required
+                    value={address}
+                    onChange={(e) => setAddress(e.target.value)}
                     className="mt-1.5"
                   />
                 </div>
@@ -176,8 +259,27 @@ const VolunteerSection = () => {
                     placeholder="Share your availability, skills, and why you'd like to volunteer..."
                     rows={4}
                     required
+                    value={message}
+                    onChange={(e) => setMessage(e.target.value)}
                     className="mt-1.5 resize-none"
                   />
+                </div>
+
+                <div>
+                  <Label className="text-sm font-semibold text-foreground">Upload Valid ID (placeholder)</Label>
+                  <div className="mt-2 flex items-center gap-3">
+                    <Input type="file" accept="image/*,application/pdf" disabled onChange={(e) => {
+                      const file = e.target.files?.[0] || null;
+                      setIdPreviewName(file ? file.name : null);
+                    }} aria-label="Upload government ID (disabled placeholder)" />
+                    <Button type="button" variant="outline" className="gap-2" disabled>
+                      <Upload className="h-4 w-4" /> Upload
+                    </Button>
+                  </div>
+                  {idPreviewName && (
+                    <p className="text-xs text-muted-foreground mt-1">Selected: {idPreviewName} (not uploaded)</p>
+                  )}
+                  <p className="text-xs text-muted-foreground mt-1">ID upload will be enabled once storage is set up.</p>
                 </div>
 
                 <Button

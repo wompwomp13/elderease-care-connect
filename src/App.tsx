@@ -6,6 +6,7 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import Index from "./pages/Index";
 import Login from "./pages/Login";
 import Signup from "./pages/Signup";
+import SignupVolunteer from "./pages/SignupVolunteer";
 import NotFound from "./pages/NotFound";
 import { getCurrentUser } from "@/lib/auth";
 import ElderHome from "@/pages/elder/ElderHome";
@@ -36,6 +37,7 @@ const App = () => (
           <Route path="/" element={<Index />} />
           <Route path="/login" element={<Login />} />
           <Route path="/signup" element={<Signup />} />
+          <Route path="/signup/volunteer" element={<SignupVolunteer />} />
 
           {/* Role sections */}
           <Route path="/elder" element={<ElderHome />} />

@@ -4,8 +4,10 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import logo from "@/assets/logo.png";
 import authBg from "@/assets/auth-background.jpg";
+import { signUpWithEmail, requireRoleRedirectPath } from "@/lib/auth";
 
 const Signup = () => {
   const navigate = useNavigate();
@@ -13,11 +15,28 @@ const Signup = () => {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [phone, setPhone] = useState("");
+  const [role] = useState<"elderly">("elderly");
+  const [error, setError] = useState<string | null>(null);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    // For prototype, just navigate to home
-    navigate("/");
+    setError(null);
+    try {
+      const profile = await signUpWithEmail(email.trim(), password, role, name, phone.trim() || undefined);
+      const redirectTo = requireRoleRedirectPath(profile.role);
+      navigate(redirectTo);
+    } catch (err: any) {
+      const msg = String(err?.code || err?.message || "");
+      if (msg.includes("auth/email-already-in-use")) {
+        setError("That email is already registered. Please sign in instead.");
+      } else if (msg.includes("auth/weak-password")) {
+        setError("Password is too weak. Please use at least 6 characters.");
+      } else if (msg.includes("auth/invalid-email")) {
+        setError("Invalid email format. Please check and try again.");
+      } else {
+        setError(err?.message || "Signup failed. Please try again.");
+      }
+    }
   };
 
   return (
@@ -31,9 +50,14 @@ const Signup = () => {
               <span className="text-lg font-bold text-primary-foreground">ElderEase</span>
             </Link>
 
-            <h1 className="text-xl font-bold text-primary-foreground mb-4">Get Started Now</h1>
+            <h1 className="text-xl font-bold text-primary-foreground mb-4">Elder/Guardian Signup</h1>
 
             <form onSubmit={handleSubmit} className="space-y-3">
+              {error && (
+                <div className="rounded-xl border border-amber-300/40 bg-amber-50 text-amber-900 p-3 text-sm shadow-sm" role="alert">
+                  <p className="font-medium">{error}</p>
+                </div>
+              )}
               <div>
                 <label className="block text-primary-foreground text-xs mb-1">Name</label>
                 <Input 
@@ -44,6 +68,8 @@ const Signup = () => {
                   className="bg-primary-foreground/10 border-primary-foreground/20 text-primary-foreground placeholder:text-primary-foreground/50 h-9"
                 />
               </div>
+
+              {/* Role selection removed for Elder/Guardian signup; defaults to elderly */}
 
               <div>
                 <label className="block text-primary-foreground text-xs mb-1">Email address</label>
@@ -60,7 +86,7 @@ const Signup = () => {
                 <label className="block text-primary-foreground text-xs mb-1">Phone number</label>
                 <Input 
                   type="tel" 
-                  placeholder="Enter your number"
+                  placeholder="e.g., +63 912 345 6789"
                   value={phone}
                   onChange={(e) => setPhone(e.target.value)}
                   className="bg-primary-foreground/10 border-primary-foreground/20 text-primary-foreground placeholder:text-primary-foreground/50 h-9"
@@ -81,8 +107,26 @@ const Signup = () => {
               <div className="flex items-center gap-2">
                 <Checkbox id="terms" className="border-primary-foreground" />
                 <label htmlFor="terms" className="text-sm text-primary-foreground">
-                  I agree to the terms & policy
+                  I agree to the
                 </label>
+                <Dialog>
+                  <DialogTrigger asChild>
+                    <button type="button" className="text-sm underline text-primary-foreground">terms & policy</button>
+                  </DialogTrigger>
+                  <DialogContent className="sm:max-w-lg">
+                    <DialogHeader>
+                      <DialogTitle>Terms & Policy</DialogTitle>
+                    </DialogHeader>
+                    <div className="space-y-3 text-sm text-muted-foreground">
+                      <p><strong>Purpose:</strong> ElderEase connects elders/guardians with vetted volunteer companions for non-medical support.</p>
+                      <p><strong>Safety:</strong> Volunteers are screened by admin. Elders/guardians should never share sensitive financial information.</p>
+                      <p><strong>Scheduling:</strong> Appointments are requests until confirmed. Changes may occur due to volunteer availability.</p>
+                      <p><strong>Privacy:</strong> We collect minimal information to provide services. Data is not sold to third parties.</p>
+                      <p><strong>Liability:</strong> ElderEase is a coordination platform and is not liable for damages beyond the scope permitted by law.</p>
+                      <p><strong>Conduct:</strong> Respectful behavior is required. Abuse or harassment may result in account suspension.</p>
+                    </div>
+                  </DialogContent>
+                </Dialog>
               </div>
 
               <Button type="submit" className="w-full bg-primary-dark hover:bg-primary-dark/90 text-primary-dark-foreground h-9">

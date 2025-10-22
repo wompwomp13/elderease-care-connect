@@ -10,8 +10,27 @@ import ContactSection from "@/components/sections/ContactSection";
 import VolunteerSection from "@/components/sections/VolunteerSection";
 import AboutSection from "@/components/sections/AboutSection";
 import Footer from "@/components/sections/Footer";
+import { useEffect, useState } from "react";
+import { subscribeToAuth, type AuthProfile } from "@/lib/auth";
 
 const Index = () => {
+  const [currentUser, setCurrentUser] = useState<AuthProfile | null>(null);
+  useEffect(() => {
+    const unsub = subscribeToAuth(setCurrentUser);
+    return () => unsub();
+  }, []);
+
+  useEffect(() => {
+    const targetId = (window.location.hash ? window.location.hash.substring(1) : null) || localStorage.getItem("scrollTarget");
+    if (!targetId) return;
+    const el = document.getElementById(targetId);
+    if (!el) return;
+    setTimeout(() => {
+      el.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 50);
+    localStorage.removeItem("scrollTarget");
+  }, []);
+
   return (
     <div className="min-h-screen bg-background">
       <Navbar />
@@ -23,7 +42,9 @@ const Index = () => {
       <FAQChatbotSection />
       <NotificationsSection />
       <ContactSection />
-      <VolunteerSection />
+      <div id="volunteer">
+        <VolunteerSection />
+      </div>
       <AboutSection />
       <Footer />
     </div>

@@ -1,0 +1,63 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Public collections: none
+
+    // Users collection holds per-user profile and role
+    match /users/{userId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && request.auth.uid == userId && isAllowedSignupRole();
+      allow update: if isSignedIn() && request.auth.uid == userId;
+      allow delete: if false; // do not allow delete from client for safety
+
+      function isAllowedSignupRole() {
+        return request.resource.data.role in ['elderly', 'companion'];
+      }
+    }
+
+    // Public volunteer applications (from landing page, no auth required to submit)
+    match /pendingVolunteers/{docId} {
+      // Allow unauthenticated creates from the public form
+      allow create: if true
+        && 'fullName' in request.resource.data
+        && 'email' in request.resource.data
+        && 'services' in request.resource.data
+        && request.resource.data.status == 'pending';
+
+      // Allow reads of approved applications (so pre-signup check can happen)
+      allow read: if isApprovedVolunteer();
+      allow update: if isSignedIn() 
+        && onlyUpdatingStatusFields();
+      allow delete: if false; // prevent accidental deletions
+
+      function onlyUpdatingStatusFields() {
+        // Only allow updating status and decidedAt fields
+        return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'decidedAt']);
+      }
+
+      function isApprovedVolunteer() {
+        return resource.data.status == 'approved';
+      }
+    }
+
+    // Approved volunteers (managed by admin/server)
+    match /volunteers/{docId} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if false; // server-only
+    }
+
+    // Example: service requests could live here later
+    match /serviceRequests/{id} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn();
+      allow update: if isSignedIn();
+      allow delete: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+  }
+}
+
+

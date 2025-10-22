@@ -11,6 +11,10 @@ import logo from "@/assets/logo.png";
 import { ChevronLeft, HeartHandshake, Home, ShoppingBasket, Users, Calendar as CalendarIcon, Check } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { format } from "date-fns";
+import TimeRangePicker from "@/components/ui/time-range-picker";
+import { format12h, isEndAfterStart } from "@/lib/time";
+import { db } from "@/lib/firebase";
+import { addDoc, collection, serverTimestamp } from "firebase/firestore";
 
 const ElderNavbar = () => {
   const user = getCurrentUser();
@@ -86,18 +90,15 @@ const services = [
   }
 ];
 
-const timeSlots = [
-  "09:00", "10:00", "11:00", "12:00",
-  "13:00", "14:00", "15:00", "16:00",
-  "17:00", "18:00", "19:00", "20:00"
-];
+// Static times replaced by precise time range picker
 
 const RequestService = () => {
   const navigate = useNavigate();
   const user = getCurrentUser();
   const [selectedServices, setSelectedServices] = useState<string[]>([]);
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(new Date());
-  const [selectedTime, setSelectedTime] = useState<string>("");
+  const [startTime, setStartTime] = useState<string | null>(null); // HH:mm (24h)
+  const [endTime, setEndTime] = useState<string | null>(null); // HH:mm (24h)
   const [additionalNotes, setAdditionalNotes] = useState("");
   const [clientName, setClientName] = useState("");
   const [clientAge, setClientAge] = useState("");
@@ -126,25 +127,52 @@ const RequestService = () => {
       });
       return;
     }
-    if (!selectedDate || !selectedTime) {
+    if (!selectedDate || !startTime || !endTime) {
       toast({
-        title: "Please select date and time",
+        title: "Please select date and time range",
         variant: "destructive"
       });
       return;
     }
+    if (!isEndAfterStart(startTime, endTime)) {
+      toast({ title: "End time must be after start time", variant: "destructive" });
+      return;
+    }
+    const serviceNames = selectedServices.map(id => services.find(s => s.id === id)?.name).filter(Boolean) as string[];
+    const currentUser = user;
+    const payload = {
+      userId: currentUser?.id ?? null,
+      elderName: clientName.trim(),
+      elderAge: clientAge.trim(),
+      address: clientAddress.trim(),
+      services: serviceNames,
+      serviceDateDisplay: format(selectedDate, "PPP"),
+      serviceDateTS: selectedDate.getTime(),
+      startTime24: startTime,
+      endTime24: endTime,
+      startTimeText: format12h(startTime),
+      endTimeText: format12h(endTime),
+      notes: additionalNotes.trim() || null,
+      status: "pending",
+      createdAt: serverTimestamp(),
+    };
 
-    // Navigate to payment confirmation with request data
-    navigate("/elder/payment-confirmation", {
-      state: {
-        name: clientName,
-        age: clientAge,
-        address: clientAddress,
-        services: selectedServices.map(id => services.find(s => s.id === id)?.name).join(", "),
-        date: format(selectedDate, "PPP"),
-        time: selectedTime
-      }
-    });
+    addDoc(collection(db, "serviceRequests"), payload)
+      .then(() => {
+        navigate("/elder/payment-confirmation", {
+          state: {
+            name: clientName,
+            age: clientAge,
+            address: clientAddress,
+            services: serviceNames.join(", "),
+            date: format(selectedDate, "PPP"),
+            time: `${format12h(startTime)} to ${format12h(endTime)}`
+          }
+        });
+      })
+      .catch((err) => {
+        toast({ title: "Failed to submit request", description: err?.message ?? "Please try again.", variant: "destructive" });
+      });
   };
 
   return (
@@ -193,7 +221,7 @@ const RequestService = () => {
                   <Label htmlFor="clientAddress">Address *</Label>
                   <Textarea
                     id="clientAddress"
-                    placeholder="Enter full address including city and zip code"
+                    placeholder="Enter complete street address and city"
                     value={clientAddress}
                     onChange={(e) => setClientAddress(e.target.value)}
                     rows={3}
@@ -284,27 +312,17 @@ const RequestService = () => {
 
             <Card>
               <CardHeader>
-                <CardTitle>Select Time</CardTitle>
+                <CardTitle>Select Time Range</CardTitle>
                 <CardDescription>
                   {selectedDate ? format(selectedDate, "EEEE, MMMM d, yyyy") : "Select a date first"}
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="grid grid-cols-4 gap-2">
-                  {timeSlots.map((time) => (
-                    <button
-                      key={time}
-                      onClick={() => setSelectedTime(time)}
-                      className={`p-3 rounded-lg text-sm font-medium transition-all ${
-                        selectedTime === time
-                          ? "bg-primary text-primary-foreground"
-                          : "bg-muted hover:bg-muted/80"
-                      }`}
-                    >
-                      {time}
-                    </button>
-                  ))}
-                </div>
+                <TimeRangePicker
+                  start={startTime}
+                  end={endTime}
+                  onChange={({ start, end }) => { setStartTime(start); setEndTime(end); }}
+                />
               </CardContent>
             </Card>
 
@@ -328,8 +346,8 @@ const RequestService = () => {
                 <div>
                   <Label className="text-xs text-muted-foreground">Date & Time</Label>
                   <p className="font-medium">
-                    {selectedDate && selectedTime
-                      ? `${format(selectedDate, "PPP")} at ${selectedTime}`
+                    {selectedDate && startTime && endTime
+                      ? `${format(selectedDate, "PPP")} • ${format12h(startTime)} to ${format12h(endTime)}`
                       : "Not selected"}
                   </p>
                 </div>
