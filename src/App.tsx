@@ -23,7 +23,8 @@ import ChatbotLogs from "@/pages/admin/ChatbotLogs";
 import ContentManagement from "@/pages/admin/ContentManagement";
 import CompanionHome from "@/pages/companion/CompanionHome";
 import MyAssignments from "@/pages/companion/MyAssignments";
-import RequestsBoard from "@/pages/companion/RequestsBoard";
+import CompanionProfile from "@/pages/companion/Profile";
+import ActivityLog from "@/pages/companion/ActivityLog";
 
 const queryClient = new QueryClient();
 
@@ -54,7 +55,9 @@ const App = () => (
           <Route path="/admin/content" element={<ContentManagement />} />
           <Route path="/companion" element={<CompanionHome />} />
           <Route path="/companion/assignments" element={<MyAssignments />} />
-          <Route path="/companion/requests" element={<RequestsBoard />} />
+          <Route path="/companion/activity" element={<ActivityLog />} />
+          
+          <Route path="/companion/profile" element={<CompanionProfile />} />
 
           {/* Fallback: if already logged, push to role home */}
           <Route path="/home" element={(() => {

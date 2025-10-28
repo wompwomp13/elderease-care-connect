@@ -1,10 +1,12 @@
 import { Link, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { logout, getCurrentUser } from "@/lib/auth";
+import { logout, getCurrentUser, subscribeToAuth, type AuthProfile } from "@/lib/auth";
 import logo from "@/assets/logo.png";
 import volunteerHero from "@/assets/volunteer-hero.jpg";
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Calendar, ClipboardList, Clock, UserCheck, CheckCircle2, Bell, MapPin, Phone, Award, Heart, TrendingUp, Star } from "lucide-react";
+import { db } from "@/lib/firebase";
+import { collection, onSnapshot, query, where } from "firebase/firestore";
 
 const CompanionNavbar = () => {
   const user = getCurrentUser();
@@ -20,9 +22,9 @@ const CompanionNavbar = () => {
         <div className="hidden md:flex items-center gap-5" role="navigation" aria-label="Primary">
           <Link to="/companion" className={`transition-opacity ${isActive("/companion") ? "font-semibold underline underline-offset-8 opacity-100" : "opacity-90 hover:opacity-100"}`}>Dashboard</Link>
           <Link to="/companion/assignments" className={`transition-opacity ${isActive("/companion/assignments") ? "font-semibold underline underline-offset-8 opacity-100" : "opacity-90 hover:opacity-100"}`}>My Assignments</Link>
-          <Link to="/companion/requests" className={`transition-opacity ${isActive("/companion/requests") ? "font-semibold underline underline-offset-8 opacity-100" : "opacity-90 hover:opacity-100"}`}>Find Requests</Link>
-          <button className="hover:opacity-80 transition-opacity" tabIndex={0}>Activity Log</button>
-          <button className="hover:opacity-80 transition-opacity" tabIndex={0}>Profile</button>
+          
+          <Link to="/companion/activity" className={`transition-opacity ${isActive("/companion/activity") ? "font-semibold underline underline-offset-8 opacity-100" : "opacity-90 hover:opacity-100"}`}>Activity Log</Link>
+          <Link to="/companion/profile" className="hover:opacity-80 transition-opacity" tabIndex={0}>Profile</Link>
           {user ? (
             <Button variant="nav" size="sm" onClick={() => { logout(); window.location.href = "/"; }} aria-label="Log out">Logout</Button>
           ) : (
@@ -39,6 +41,24 @@ const CompanionNavbar = () => {
 const CompanionHome = () => {
   const user = useMemo(() => getCurrentUser(), []);
   const displayName = user?.name ?? "Companion";
+  const [email, setEmail] = useState<string | null>(user?.email ?? null);
+  const [assignments, setAssignments] = useState<any[]>([]);
+
+  useEffect(() => {
+    const unsub = subscribeToAuth((p: AuthProfile | null) => setEmail(p?.email?.toLowerCase() ?? null));
+    return () => unsub();
+  }, []);
+
+  useEffect(() => {
+    if (!email) { setAssignments([]); return; }
+    const q = query(collection(db, "assignments"), where("volunteerEmail", "==", email));
+    const unsub = onSnapshot(q, (snap) => setAssignments(snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }))));
+    return () => unsub();
+  }, [email]);
+
+  const now = new Date();
+  const weekEnd = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+  const weekAssignments = assignments.filter((a) => typeof a.serviceDateTS === "number" && a.serviceDateTS >= now.setHours(0,0,0,0) && a.serviceDateTS <= weekEnd.getTime());
   
   return (
     <div className="min-h-screen bg-gradient-to-b from-background to-muted/20">
@@ -104,7 +124,7 @@ const CompanionHome = () => {
               <span className="text-xs font-medium text-blue-600 bg-blue-500/10 px-2 py-1 rounded-full">This Week</span>
             </div>
             <h3 className="text-sm text-muted-foreground mb-1">Upcoming Visits</h3>
-            <p className="text-2xl font-bold">2</p>
+            <p className="text-2xl font-bold">{weekAssignments.length}</p>
           </div>
 
           <div className="bg-gradient-to-br from-green-500/10 to-green-500/5 p-6 rounded-2xl border border-green-500/20">
@@ -134,126 +154,29 @@ const CompanionHome = () => {
         <div className="grid lg:grid-cols-3 gap-8">
           {/* Left Column */}
           <div className="lg:col-span-2 space-y-6">
-            {/* Next Visit */}
+            {/* This Week Overview (from assignments) */}
             <div className="bg-card p-6 rounded-2xl border shadow-sm">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-xl font-bold">Your Next Visit</h2>
-                <div className="flex items-center gap-2 text-sm font-medium text-primary">
-                  <Clock className="h-4 w-4" />
-                  <span>Today, 3:00 PM</span>
-                </div>
-              </div>
-              <div className="flex items-start gap-4 p-4 bg-gradient-to-r from-primary/5 to-transparent rounded-xl border border-primary/10">
-                <div className="h-14 w-14 rounded-full bg-primary/10 grid place-items-center flex-shrink-0">
-                  <UserCheck className="h-7 w-7 text-primary" />
-                </div>
-                <div className="flex-1">
-                  <h3 className="font-semibold text-lg mb-1">Mary Thompson</h3>
-                  <p className="text-sm text-muted-foreground mb-3">Companionship • 1 hour • 2.1 miles away</p>
-                  <div className="flex gap-3">
-                    <Button size="sm" className="gap-2">
-                      <MapPin className="h-4 w-4" />
-                      Directions
-                    </Button>
-                    <Button size="sm" variant="outline" className="gap-2">
-                      <Phone className="h-4 w-4" />
-                      Call
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Open Requests */}
-            <div className="bg-card p-6 rounded-2xl border shadow-sm">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-xl font-bold">Available Requests</h2>
-                <Button variant="ghost" size="sm">View All</Button>
-              </div>
+              <h2 className="text-xl font-bold mb-4">This Week Overview</h2>
               <div className="space-y-3">
-                <div className="p-4 rounded-xl border bg-gradient-to-r from-blue-500/5 to-transparent hover:shadow-md transition-all cursor-pointer">
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-2">
-                        <h3 className="font-semibold">Grocery Shopping</h3>
-                        <span className="text-xs bg-blue-500/10 text-blue-600 px-2 py-1 rounded-full">Errands</span>
-                      </div>
-                      <p className="text-sm text-muted-foreground mb-2">Tomorrow • 10:00 AM • 1.5 mi away</p>
-                      <p className="text-sm">Help with weekly grocery shopping at local market</p>
+                {weekAssignments.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No assignments this week.</p>
+                ) : weekAssignments
+                    .sort((a, b) => (a.serviceDateTS ?? 0) - (b.serviceDateTS ?? 0))
+                    .map((a) => (
+                  <div key={a.id} className="flex items-center justify-between p-3 rounded-xl bg-background border">
+                    <div className="text-sm">
+                      <p className="font-medium">{Array.isArray(a.services) ? a.services.join(", ") : a.services}</p>
+                      <p className="text-muted-foreground">{new Date(a.serviceDateTS).toLocaleDateString()} • {a.startTimeText} - {a.endTimeText}</p>
                     </div>
-                    <Button size="sm" variant="outline">Accept</Button>
+                    <span className="text-xs px-2 py-1 rounded-full bg-primary/10 text-primary">Assigned</span>
                   </div>
-                </div>
-
-                <div className="p-4 rounded-xl border bg-gradient-to-r from-green-500/5 to-transparent hover:shadow-md transition-all cursor-pointer">
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-2">
-                        <h3 className="font-semibold">Afternoon Chat</h3>
-                        <span className="text-xs bg-green-500/10 text-green-600 px-2 py-1 rounded-full">Companionship</span>
-                      </div>
-                      <p className="text-sm text-muted-foreground mb-2">Friday • 2:00 PM • 3.2 mi away</p>
-                      <p className="text-sm">Looking for friendly conversation and company</p>
-                    </div>
-                    <Button size="sm" variant="outline">Accept</Button>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Recent Activity Timeline */}
-            <div className="bg-card p-6 rounded-2xl border shadow-sm">
-              <h2 className="text-xl font-bold mb-4">Recent Activity</h2>
-              <div className="relative border-l-2 border-primary/20 pl-6 space-y-6">
-                <div className="relative">
-                  <div className="absolute -left-8 top-1 h-4 w-4 rounded-full bg-primary border-4 border-background" />
-                  <div className="space-y-1">
-                    <p className="font-medium">Completed visit with Mary Thompson</p>
-                    <p className="text-sm text-muted-foreground">Yesterday • 1h companionship</p>
-                  </div>
-                </div>
-                <div className="relative">
-                  <div className="absolute -left-8 top-1 h-4 w-4 rounded-full bg-blue-500 border-4 border-background" />
-                  <div className="space-y-1">
-                    <p className="font-medium">Accepted grocery assistance request</p>
-                    <p className="text-sm text-muted-foreground">2 days ago • 45m errands</p>
-                  </div>
-                </div>
-                <div className="relative">
-                  <div className="absolute -left-8 top-1 h-4 w-4 rounded-full bg-muted border-4 border-background" />
-                  <div className="space-y-1">
-                    <p className="font-medium">Updated availability schedule</p>
-                    <p className="text-sm text-muted-foreground">3 days ago • M, W, F mornings</p>
-                  </div>
-                </div>
+                ))}
               </div>
             </div>
           </div>
 
           {/* Right Column */}
           <div className="space-y-6">
-            {/* Quick Actions */}
-            <div className="bg-card p-6 rounded-2xl border shadow-sm">
-              <h2 className="text-xl font-bold mb-4">Quick Actions</h2>
-              <div className="space-y-2">
-                <Button variant="outline" className="w-full justify-start gap-3 h-auto py-3">
-                  <Clock className="h-5 w-5 text-primary" />
-                  <span>Set Availability</span>
-                </Button>
-                <Button variant="outline" className="w-full justify-start gap-3 h-auto py-3">
-                  <ClipboardList className="h-5 w-5 text-blue-600" />
-                  <span>Review Requests</span>
-                </Button>
-                <Button variant="outline" className="w-full justify-start gap-3 h-auto py-3">
-                  <CheckCircle2 className="h-5 w-5 text-green-600" />
-                  <span>Log Hours</span>
-                </Button>
-                <Button variant="outline" className="w-full justify-start gap-3 h-auto py-3">
-                  <Bell className="h-5 w-5 text-purple-600" />
-                  <span>Notifications</span>
-                </Button>
-              </div>
-            </div>
 
             {/* Impact Summary */}
             <div className="bg-gradient-to-br from-primary/5 to-primary/10 p-6 rounded-2xl border border-primary/20">

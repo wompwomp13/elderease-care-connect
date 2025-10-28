@@ -8,6 +8,7 @@ import volunteerSarah from "@/assets/volunteer-sarah.jpg";
 import volunteerJohn from "@/assets/volunteer-john.jpg";
 import volunteerEmily from "@/assets/volunteer-emily.jpg";
 import { HeartHandshake, Home, ShoppingBasket, Users, Star, Clock, DollarSign, TrendingUp } from "lucide-react";
+import ElderChatbot from "@/components/elder/ElderChatbot";
 
 const ElderNavbar = () => {
   const user = getCurrentUser();
@@ -247,6 +248,7 @@ const BrowseServices = () => {
           </Link>
         </div>
       </div>
+      <ElderChatbot />
     </div>
   );
 };

@@ -8,12 +8,14 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { useEffect, useMemo, useState } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { db } from "@/lib/firebase";
-import { collection, doc, onSnapshot, orderBy, query, updateDoc, where } from "firebase/firestore";
+import { addDoc, collection, doc, getDocs, limit, onSnapshot, orderBy, query, serverTimestamp, updateDoc, where } from "firebase/firestore";
 
 const ServiceRequests = () => {
   const { toast } = useToast();
   const [requests, setRequests] = useState<any[] | null>(null);
   const [volunteers, setVolunteers] = useState<any[] | null>(null);
+  const [ratingsMap, setRatingsMap] = useState<Record<string, { avg: number; count: number }>>({});
+  const [tasksMap, setTasksMap] = useState<Record<string, number>>({});
 
   useEffect(() => {
     const q = query(collection(db, "serviceRequests"), orderBy("createdAt", "desc"));
@@ -27,6 +29,48 @@ const ServiceRequests = () => {
     const q = query(collection(db, "pendingVolunteers"), where("status", "==", "approved"));
     const unsub = onSnapshot(q, (snap) => {
       setVolunteers(snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })));
+    });
+    return () => unsub();
+  }, []);
+
+  // Live ratings aggregation (by volunteer email)
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, "ratings"), (snap) => {
+      const sums: Record<string, { sum: number; count: number }> = {};
+      snap.docs.forEach((doc) => {
+        const r = doc.data() as any;
+        const email = (r.volunteerEmail || "").toLowerCase();
+        const value = Number(r.rating) || 0;
+        if (!email || value <= 0) return;
+        if (!sums[email]) sums[email] = { sum: 0, count: 0 };
+        sums[email].sum += value;
+        sums[email].count += 1;
+      });
+      const avg: Record<string, { avg: number; count: number }> = {};
+      Object.keys(sums).forEach((email) => {
+        const { sum, count } = sums[email];
+        avg[email] = { avg: sum / count, count };
+      });
+      setRatingsMap(avg);
+    });
+    return () => unsub();
+  }, []);
+
+  // Live tasks completed aggregation (by volunteer email)
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, "assignments"), (snap) => {
+      const counts: Record<string, number> = {};
+      snap.docs.forEach((d) => {
+        const a = d.data() as any;
+        const email = (a.volunteerEmail || "").toLowerCase();
+        if (!email) return;
+        const isCompleted = a.status === "completed";
+        const confirmed = a.guardianConfirmed === true; // require elder confirmation for reliability
+        if (isCompleted && confirmed) {
+          counts[email] = (counts[email] || 0) + 1;
+        }
+      });
+      setTasksMap(counts);
     });
     return () => unsub();
   }, []);
@@ -49,6 +93,18 @@ const ServiceRequests = () => {
     const matched = volunteers.filter((v) => {
       const volServiceIds: string[] = Array.isArray(v.services) ? v.services.map((s: string) => toServiceId(s)) : [];
       return reqServiceIds.some((sid) => volServiceIds.includes(sid));
+    })
+    // Enrich with live rating data
+    .map((v) => {
+      const emailKey = (v.email || "").toLowerCase();
+      const agg = ratingsMap[emailKey];
+      const tasksDone = tasksMap[emailKey] ?? 0;
+      return {
+        ...v,
+        rating: agg?.avg ?? null,
+        ratingCount: agg?.count ?? 0,
+        tasksCompleted: tasksDone,
+      };
     });
     // Prioritize by rating (desc), then tasksCompleted (desc)
     return matched.sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0) || (b.tasksCompleted ?? 0) - (a.tasksCompleted ?? 0));
@@ -75,10 +131,41 @@ const ServiceRequests = () => {
 
   // Removed old static volunteers list; now using Firestore "pendingVolunteers" (approved)
 
-  const handleAssign = async (requestId: string, volunteerName: string) => {
+  const handleAssign = async (requestId: string, volunteer: any) => {
     try {
-      await updateDoc(doc(db, "serviceRequests", requestId), { status: "assigned", assignedTo: volunteerName });
-      toast({ title: "Volunteer Assigned", description: `${volunteerName} has been assigned to this request.` });
+      await updateDoc(doc(db, "serviceRequests", requestId), { status: "assigned", assignedTo: volunteer.fullName });
+      // Create assignment for volunteer portal
+      const req = (requests || []).find((r) => r.id === requestId);
+      if (req) {
+        let volunteerUid: string | null = null;
+        try {
+          if (volunteer.email) {
+            const uQ = query(collection(db, "users"), where("email", "==", volunteer.email), limit(1));
+            const uSnap = await getDocs(uQ);
+            if (!uSnap.empty) volunteerUid = uSnap.docs[0].id;
+          }
+        } catch {}
+        await addDoc(collection(db, "assignments"), {
+          requestId,
+          volunteerDocId: volunteer.id,
+          volunteerEmail: volunteer.email || null,
+          volunteerName: volunteer.fullName,
+          volunteerUid,
+          elderUserId: req.userId || null,
+          elderName: req.elderName,
+          address: req.address,
+          services: req.services || (req.service ? [req.service] : []),
+          serviceDateTS: req.serviceDateTS || null,
+          startTime24: req.startTime24 || null,
+          endTime24: req.endTime24 || null,
+          startTimeText: req.startTimeText || null,
+          endTimeText: req.endTimeText || null,
+          status: "assigned",
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      }
+      toast({ title: "Volunteer Assigned", description: `${volunteer.fullName} has been assigned to this request.` });
     } catch (e: any) {
       toast({ title: "Failed to assign", description: e?.message ?? "Please try again.", variant: "destructive" });
     }
@@ -185,7 +272,7 @@ const ServiceRequests = () => {
                                 <CarouselItem key={idx}>
                                   <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
                                     {page.map((v) => {
-                                      const rating = v.rating ?? 4.0;
+                                      const hasRating = typeof v.rating === "number" && v.rating > 0;
                                       const tasks = v.tasksCompleted ?? 0;
                                       const volServiceIds: string[] = Array.isArray(v.services) ? v.services.map((s: string) => toServiceId(s)) : [];
                                       const reqServiceIds: string[] = Array.isArray(request.services)
@@ -207,8 +294,14 @@ const ServiceRequests = () => {
                                                 </div>
                                               </div>
                                               <div className="text-right">
-                                                {renderStars(rating)}
-                                                <p className="text-xs text-muted-foreground mt-0.5">{rating.toFixed(1)} rating</p>
+                                                {hasRating ? (
+                                                  <>
+                                                    {renderStars(v.rating)}
+                                                    <p className="text-xs text-muted-foreground mt-0.5">{v.rating.toFixed(1)} rating</p>
+                                                  </>
+                                                ) : (
+                                                  <span className="text-xs text-muted-foreground">Not yet rated</span>
+                                                )}
                                               </div>
                                             </div>
                                             <p className="text-sm text-muted-foreground mb-3 line-clamp-2 min-h-[2.5rem]">
@@ -250,7 +343,7 @@ const ServiceRequests = () => {
                                                   </div>
                                                   <div className="flex items-center gap-2">
                                                     <span className="font-medium">Rating:</span>
-                                                    <span>{rating.toFixed(1)}</span>
+                                                    <span>{hasRating ? v.rating.toFixed(1) : 'Not yet rated'}</span>
                                                   </div>
                                                   <div className="flex items-center gap-2">
                                                     <span className="font-medium">Tasks completed:</span>
@@ -273,7 +366,7 @@ const ServiceRequests = () => {
                                                 </div>
                                               </DialogContent>
                                             </Dialog>
-                                            <Button onClick={() => handleAssign(request.id, v.fullName)}>Assign</Button>
+                                            <Button onClick={() => handleAssign(request.id, v)}>Assign</Button>
                     </div>
                                         </div>
                                       );

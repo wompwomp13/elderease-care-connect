@@ -1,11 +1,18 @@
 import { Link, useLocation } from "react-router-dom";
-import { getCurrentUser, logout } from "@/lib/auth";
+import { getCurrentUser, logout, subscribeToAuth, type AuthProfile } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import logo from "@/assets/logo.png";
 import nurseImg from "@/assets/volunteer-nurse.png";
 import courierImg from "@/assets/volunteer-courier.jpg";
-import { Calendar, MapPin, Clock, Phone, HeartHandshake, ShoppingBasket } from "lucide-react";
+import { Calendar, MapPin, Clock, Phone, HeartHandshake, ShoppingBasket, User } from "lucide-react";
+import { useEffect, useState, useMemo } from "react";
+import { db } from "@/lib/firebase";
+import { addDoc, collection, doc, onSnapshot, orderBy, query, serverTimestamp, updateDoc, where } from "firebase/firestore";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Star as StarIcon } from "lucide-react";
+import ElderChatbot from "@/components/elder/ElderChatbot";
+import { useToast } from "@/components/ui/use-toast";
 
 const ElderNavbar = () => {
   const user = getCurrentUser();
@@ -40,6 +47,24 @@ const ElderNavbar = () => {
 const MySchedule = () => {
   const user = getCurrentUser();
   const firstName = user?.name?.split(" ")[0] ?? "Friend";
+  const [uid, setUid] = useState<string | null>(user?.id ?? null);
+  const [assignments, setAssignments] = useState<any[] | null>(null);
+  const [rateTarget, setRateTarget] = useState<any | null>(null);
+  const [ratingValue, setRatingValue] = useState<number>(5);
+  const [ratingFeedback, setRatingFeedback] = useState<string>("");
+  const { toast } = useToast();
+
+  useEffect(() => {
+    const unsub = subscribeToAuth((p: AuthProfile | null) => setUid(p?.uid ?? null));
+    return () => unsub();
+  }, []);
+
+  useEffect(() => {
+    if (!uid) { setAssignments([]); return; }
+    const q = query(collection(db, "assignments"), where("elderUserId", "==", uid), orderBy("serviceDateTS", "asc"));
+    const unsub = onSnapshot(q, (snap) => setAssignments(snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }))));
+    return () => unsub();
+  }, [uid]);
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-background to-muted/20">
@@ -52,102 +77,84 @@ const MySchedule = () => {
           <p className="text-muted-foreground">Here are your loved one's upcoming visits and helpful details, {firstName}.</p>
         </div>
 
-        <div className="grid lg:grid-cols-3 gap-6">
-          {/* Left column: Featured visit card (inspired by attached layout) */}
-          <div className="lg:col-span-2 space-y-6">
-            <Card className="overflow-hidden">
-              <div className="grid sm:grid-cols-2 gap-0">
-                <div className="p-6">
-                  <CardHeader className="p-0 mb-4">
-                    <CardTitle className="text-2xl">Friendly Companionship</CardTitle>
-                    <CardDescription>Relaxed conversation, a short walk, and light reading</CardDescription>
-                  </CardHeader>
-                  <ul className="text-sm space-y-2 text-muted-foreground mb-4">
-                    <li className="flex items-center gap-2"><Clock className="h-4 w-4" /> 50 minutes</li>
-                    <li className="flex items-center gap-2"><Calendar className="h-4 w-4" /> Today, 3:00 PM</li>
-                    <li className="flex items-center gap-2"><MapPin className="h-4 w-4" /> At your home</li>
-                  </ul>
-                  <div className="flex gap-2">
-                    <Button className="gap-2" aria-label="Call volunteer"><Phone className="h-4 w-4" /> Call</Button>
-                    <Button variant="outline" className="gap-2" aria-label="Get directions"><MapPin className="h-4 w-4" /> Directions</Button>
+        {assignments === null ? (
+          <div className="p-6 text-muted-foreground">Loading schedule…</div>
+        ) : assignments.length === 0 ? (
+          <div className="p-6 text-muted-foreground">No scheduled services yet.</div>
+        ) : (
+          <div className="grid lg:grid-cols-2 gap-6">
+            {assignments.map((a) => (
+              <Card key={a.id} className="overflow-hidden hover:shadow-md transition-all">
+                <div className="p-5 flex items-start gap-4">
+                  <div className="h-14 w-14 rounded-full bg-primary/10 grid place-items-center flex-shrink-0">
+                    <User className="h-7 w-7 text-primary" />
                   </div>
-                </div>
-                <div className="p-4 flex items-center justify-center bg-muted/40">
-                  <img src={nurseImg} alt="Volunteer nurse" className="max-h-60 w-auto rounded-xl" />
-                </div>
-              </div>
-            </Card>
-
-            {/* Secondary assignment */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2"><ShoppingBasket className="h-5 w-5 text-primary" /> Grocery Errand</CardTitle>
-                <CardDescription>Pick up essentials from the nearby market</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="grid sm:grid-cols-2 gap-4 items-center">
-                  <div className="space-y-2 text-sm">
-                    <p className="flex items-center gap-2"><Calendar className="h-4 w-4" /> Tomorrow, 11:00 AM</p>
-                    <p className="flex items-center gap-2"><MapPin className="h-4 w-4" /> Community Market • 1.2 mi</p>
-                    <p className="flex items-center gap-2"><HeartHandshake className="h-4 w-4" /> Volunteer: Sam Rivera</p>
-                    <div className="flex gap-2 mt-2">
-                      <Button size="sm" variant="outline">View List</Button>
-                      <Button size="sm">Confirm</Button>
+                  <div className="flex-1 min-w-0">
+                    <h3 className="text-xl font-semibold leading-tight truncate">{Array.isArray(a.services) ? a.services.join(", ") : a.services}</h3>
+                    <p className="text-sm text-muted-foreground truncate">{a.address || "At your home"}</p>
+                    <div className="mt-2 flex flex-wrap gap-3 text-sm text-muted-foreground">
+                      <span className="flex items-center gap-1"><Clock className="h-4 w-4" /> {a.startTimeText} - {a.endTimeText}</span>
+                      <span className="flex items-center gap-1"><Calendar className="h-4 w-4" /> {a.serviceDateTS ? new Date(a.serviceDateTS).toLocaleDateString() : "—"}</span>
+                      {a.volunteerName && (
+                        <span className="flex items-center gap-1"><User className="h-4 w-4" /> {a.volunteerName}</span>
+                      )}
                     </div>
+                    {a.notes && (
+                      <p className="mt-3 text-sm">{a.notes}</p>
+                    )}
                   </div>
-                  <div className="flex items-center justify-center">
-                    <img src={courierImg} alt="Volunteer delivering groceries" className="rounded-xl max-h-40 w-auto" />
+                  <div className="flex flex-col gap-2">
+                    {a.status === "completed" && !a.guardianConfirmed && (
+                      <Button size="sm" onClick={() => setRateTarget(a)}>Confirm Completed</Button>
+                    )}
+                    <Button size="sm" variant="outline" className="gap-2" aria-label="Call volunteer"><Phone className="h-4 w-4" /> Call</Button>
                   </div>
                 </div>
-              </CardContent>
-            </Card>
+              </Card>
+            ))}
           </div>
-
-          {/* Right column: Day overview */}
-          <div className="space-y-6">
-            <Card>
-              <CardHeader>
-                <CardTitle>Today</CardTitle>
-                <CardDescription>Your day at a glance</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-3 text-sm">
-                <div className="flex items-start gap-3 p-3 rounded-lg border">
-                  <div className="h-8 w-8 rounded-full bg-primary/10 grid place-items-center"><HeartHandshake className="h-4 w-4 text-primary" /></div>
-                  <div>
-                    <p className="font-medium">Companionship with Sam</p>
-                    <p className="text-muted-foreground">3:00 PM • At home</p>
-                  </div>
-                </div>
-                <div className="flex items-start gap-3 p-3 rounded-lg border">
-                  <div className="h-8 w-8 rounded-full bg-blue-500/10 grid place-items-center"><ShoppingBasket className="h-4 w-4 text-blue-600" /></div>
-                  <div>
-                    <p className="font-medium">Prepare grocery list</p>
-                    <p className="text-muted-foreground">This evening • For tomorrow's errand</p>
-                  </div>
-                </div>
-                <div className="flex items-start gap-3 p-3 rounded-lg border">
-                  <div className="h-8 w-8 rounded-full bg-green-500/10 grid place-items-center"><Clock className="h-4 w-4 text-green-600" /></div>
-                  <div>
-                    <p className="font-medium">Short walk</p>
-                    <p className="text-muted-foreground">After visit • 10 minutes</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle>Helpful Notes</CardTitle>
-              </CardHeader>
-              <CardContent className="text-sm text-muted-foreground space-y-2">
-                <p>• Keep medications and water nearby for your comfort during visits.</p>
-                <p>• If you need to change timing, use the Request Service page anytime.</p>
-                <p>• You can always reach us using the chat button at the bottom.</p>
-              </CardContent>
-            </Card>
-          </div>
-        </div>
+        )}
       </main>
+      {/* Rating Dialog */}
+      <Dialog open={!!rateTarget} onOpenChange={(open) => { if (!open) setRateTarget(null); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Rate your service</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 text-sm">
+            <p className="text-muted-foreground">How was your service with <span className="font-medium">{rateTarget?.volunteerName || 'your volunteer'}</span>?</p>
+            <div className="flex items-center gap-2">
+              {[1,2,3,4,5].map((n) => (
+                <button key={n} onClick={() => setRatingValue(n)} aria-label={`Rate ${n}`} className={`h-8 w-8 rounded-full grid place-items-center ${n <= ratingValue ? 'bg-amber-500 text-white' : 'bg-muted text-foreground'}`}>
+                  <StarIcon className="h-4 w-4" />
+                </button>
+              ))}
+            </div>
+            <textarea className="w-full rounded-md border p-2 text-sm" rows={3} placeholder="What did you like or what could be improved?" value={ratingFeedback} onChange={(e) => setRatingFeedback(e.target.value)} />
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setRateTarget(null)}>Cancel</Button>
+              <Button onClick={async () => {
+                if (!rateTarget) return;
+                await updateDoc(doc(db, 'assignments', rateTarget.id), { guardianConfirmed: true, updatedAt: serverTimestamp() });
+                await addDoc(collection(db, 'ratings'), {
+                  assignmentId: rateTarget.id,
+                  volunteerEmail: rateTarget.volunteerEmail || null,
+                  volunteerName: rateTarget.volunteerName || null,
+                  elderUserId: rateTarget.elderUserId || uid || null,
+                  rating: ratingValue,
+                  feedback: ratingFeedback || null,
+                  createdAt: serverTimestamp(),
+                });
+                setRateTarget(null);
+                setRatingValue(5);
+                setRatingFeedback('');
+                toast({ title: 'Thanks for your feedback!', description: 'Your confirmation and rating have been submitted.' });
+              }}>Submit</Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+      <ElderChatbot />
     </div>
   );
 };

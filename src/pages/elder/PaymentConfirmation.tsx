@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { getCurrentUser, logout } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import logo from "@/assets/logo.png";
 import { CheckCircle, Calendar, Clock, DollarSign, User, MapPin, Home } from "lucide-react";
+import { minutesSinceMidnight } from "@/lib/time";
 
 const ElderNavbar = () => {
   const user = getCurrentUser();
@@ -34,6 +35,75 @@ const ElderNavbar = () => {
 const PaymentConfirmation = () => {
   const location = useLocation();
   const requestData = location.state || {};
+
+  const serviceRates: Record<string, number> = {
+    "Companionship": 150,
+    "Light Housekeeping": 170,
+    "Running Errands": 200,
+    "Home Visits": 180,
+    "Socialization": 230,
+  };
+
+  const parseServicesArray = (rd: any): string[] => {
+    if (Array.isArray(rd.servicesArray) && rd.servicesArray.length > 0) return rd.servicesArray as string[];
+    if (typeof rd.services === "string" && rd.services.length > 0) return String(rd.services).split(",").map((s) => s.trim());
+    return [];
+  };
+
+  const startEnd = useMemo(() => {
+    const start24 = requestData.startTime24 as string | undefined;
+    const end24 = requestData.endTime24 as string | undefined;
+    if (start24 && end24) return { start24, end24 };
+    // Fallback: try to parse from time string like "3:00 PM to 5:00 PM" (not robust, but fallback only)
+    const timeStr = String(requestData.time || "");
+    const parts = timeStr.split(/to|-/i).map((s: string) => s.trim());
+    if (parts.length === 2) return { start24: start24 ?? "", end24: end24 ?? "" };
+    return { start24: "", end24: "" };
+  }, [requestData]);
+
+  const duration = useMemo(() => {
+    const startM = minutesSinceMidnight(startEnd.start24);
+    const endM = minutesSinceMidnight(startEnd.end24);
+    if (startM < 0 || endM < 0 || endM <= startM) return { minutes: 0, hours: 0 };
+    const minutes = endM - startM;
+    const hours = minutes / 60;
+    return { minutes, hours };
+  }, [startEnd]);
+
+  const servicesSelected = useMemo(() => parseServicesArray(requestData), [requestData]);
+
+  const pricing = useMemo(() => {
+    const hours = duration.hours;
+    if (hours <= 0 || servicesSelected.length === 0) return { lineItems: [], subtotal: 0, commission: 0, total: 0 };
+    const lineItems = servicesSelected.map((name: string) => {
+      const rate = serviceRates[name] ?? 0;
+      const amount = rate * hours;
+      return { name, rate, hours, amount };
+    });
+    const subtotal = lineItems.reduce((sum, li) => sum + li.amount, 0);
+    const commission = subtotal * 0.05;
+    const total = subtotal + commission;
+    return { lineItems, subtotal, commission, total };
+  }, [servicesSelected, duration.hours]);
+
+  const formatPHP = (value: number) => new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP", currencyDisplay: "narrowSymbol", minimumFractionDigits: 2 }).format(value);
+
+  const humanDuration = useMemo(() => {
+    const mins = duration.minutes;
+    if (mins <= 0) return "0 minutes";
+    const h = Math.floor(mins / 60);
+    const m = mins % 60;
+    const hPart = h > 0 ? `${h} hour${h === 1 ? "" : "s"}` : "";
+    const mPart = m > 0 ? `${m} minute${m === 1 ? "" : "s"}` : "";
+    return [hPart, mPart].filter(Boolean).join(" ");
+  }, [duration]);
+
+  const confirmationNumber = useMemo(() => {
+    const rid = String(requestData.requestId || "");
+    if (rid) return `#SR-${rid.slice(0, 8).toUpperCase()}`;
+    const ts = Date.now().toString(36).toUpperCase();
+    return `#SR-${ts.slice(-8)}`;
+  }, [requestData.requestId]);
 
   useEffect(() => {
     window.scrollTo(0, 0);
@@ -66,7 +136,7 @@ const PaymentConfirmation = () => {
             {/* Confirmation Number */}
             <div className="p-4 bg-gradient-to-r from-primary/10 to-primary/5 rounded-xl border border-primary/20">
               <p className="text-sm text-muted-foreground mb-1">Confirmation Number</p>
-              <p className="text-2xl font-bold text-primary">#SR-{Math.floor(Math.random() * 10000)}</p>
+              <p className="text-2xl font-bold text-primary">{confirmationNumber}</p>
             </div>
 
             <Separator />
@@ -112,11 +182,11 @@ const PaymentConfirmation = () => {
                 </div>
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Time:</span>
-                  <span className="font-medium">{requestData.time || "3:00 PM"}</span>
+                  <span className="font-medium">{requestData.time || "—"}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Duration:</span>
-                  <span className="font-medium">2 hours (estimated)</span>
+                  <span className="font-medium">{humanDuration}</span>
                 </div>
               </div>
             </div>
@@ -129,19 +199,32 @@ const PaymentConfirmation = () => {
                 <DollarSign className="h-5 w-5 text-primary" />
                 Payment Information
               </h3>
-              <div className="bg-muted/50 p-4 rounded-xl space-y-2 text-sm">
+              <div className="bg-muted/50 p-4 rounded-xl space-y-3 text-sm">
+                {pricing.lineItems.length > 0 ? (
+                  <div className="space-y-2">
+                    {pricing.lineItems.map((li) => (
+                      <div key={li.name} className="flex justify-between">
+                        <span className="text-muted-foreground">{li.name} ({formatPHP(li.rate)}/hr × {li.hours.toFixed(2)} hr)</span>
+                        <span className="font-medium">{formatPHP(li.amount)}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-muted-foreground">No services selected</div>
+                )}
+                <Separator />
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">Service Fee (2 hours):</span>
-                  <span className="font-medium">$60.00</span>
+                  <span className="text-muted-foreground">Subtotal</span>
+                  <span className="font-medium">{formatPHP(pricing.subtotal)}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">Service Charge:</span>
-                  <span className="font-medium">$5.00</span>
+                  <span className="text-muted-foreground">Commission (5%)</span>
+                  <span className="font-medium">{formatPHP(pricing.commission)}</span>
                 </div>
                 <Separator />
                 <div className="flex justify-between text-base">
-                  <span className="font-semibold">Total Amount:</span>
-                  <span className="font-bold text-primary text-lg">$65.00</span>
+                  <span className="font-semibold">Total Amount</span>
+                  <span className="font-bold text-primary text-lg">{formatPHP(pricing.total)}</span>
                 </div>
               </div>
               <p className="text-xs text-muted-foreground mt-3">

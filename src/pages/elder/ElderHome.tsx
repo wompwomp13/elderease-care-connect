@@ -6,6 +6,7 @@ import logo from "@/assets/logo.png";
 import companionshipImage from "@/assets/elder-companionship.jpg";
 import { useMemo, useRef, useState, useEffect } from "react";
 import { HeartHandshake, ShoppingBasket, Home, Users, Calendar, Bell, MessageSquare, Sparkles, TrendingUp } from "lucide-react";
+import ElderChatbot from "@/components/elder/ElderChatbot";
 
 const ElderNavbar = () => {
   const user = getCurrentUser();
@@ -385,8 +386,7 @@ const ElderHome = () => {
         </div>
       </main>
 
-      <ChatWidget isOpen={isChatOpen} onToggle={() => setIsChatOpen((v) => !v)} />
-      <ChatPanel isOpen={isChatOpen} handleClose={() => setIsChatOpen(false)} />
+      <ElderChatbot />
     </div>
   );
 };

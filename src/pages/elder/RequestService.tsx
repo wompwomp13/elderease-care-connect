@@ -12,6 +12,7 @@ import { ChevronLeft, HeartHandshake, Home, ShoppingBasket, Users, Calendar as C
 import { toast } from "@/hooks/use-toast";
 import { format } from "date-fns";
 import TimeRangePicker from "@/components/ui/time-range-picker";
+import ElderChatbot from "@/components/elder/ElderChatbot";
 import { format12h, isEndAfterStart } from "@/lib/time";
 import { db } from "@/lib/firebase";
 import { addDoc, collection, serverTimestamp } from "firebase/firestore";
@@ -158,15 +159,19 @@ const RequestService = () => {
     };
 
     addDoc(collection(db, "serviceRequests"), payload)
-      .then(() => {
+      .then((docRef) => {
         navigate("/elder/payment-confirmation", {
           state: {
             name: clientName,
             age: clientAge,
             address: clientAddress,
             services: serviceNames.join(", "),
+            servicesArray: serviceNames,
             date: format(selectedDate, "PPP"),
-            time: `${format12h(startTime)} to ${format12h(endTime)}`
+            time: `${format12h(startTime)} to ${format12h(endTime)}`,
+            startTime24: startTime,
+            endTime24: endTime,
+            requestId: docRef.id,
           }
         });
       })
@@ -363,8 +368,10 @@ const RequestService = () => {
           </div>
         </div>
       </div>
+      <ElderChatbot />
     </div>
   );
 };
 
 export default RequestService;
+

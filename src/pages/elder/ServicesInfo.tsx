@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import logo from "@/assets/logo.png";
 import { HeartHandshake, Home, ShoppingBasket, Users, Calendar, Check } from "lucide-react";
+import ElderChatbot from "@/components/elder/ElderChatbot";
 
 const ElderNavbar = () => {
   const user = getCurrentUser();
@@ -191,6 +192,7 @@ const ServicesInfo = () => {
           </div>
         </div>
       </div>
+      <ElderChatbot />
     </div>
   );
 };

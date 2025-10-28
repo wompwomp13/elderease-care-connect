@@ -1,8 +1,12 @@
 import { Link, useLocation } from "react-router-dom";
-import { getCurrentUser, logout } from "@/lib/auth";
+import { getCurrentUser, logout, subscribeToAuth, type AuthProfile } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import logo from "@/assets/logo.png";
 import { Bell, Calendar, HeartHandshake, ShoppingBasket, Home, Users, MessageSquare } from "lucide-react";
+import { useEffect, useState } from "react";
+import { db } from "@/lib/firebase";
+import { collection, onSnapshot, orderBy, query, where } from "firebase/firestore";
+import ElderChatbot from "@/components/elder/ElderChatbot";
 
 const ElderNavbar = () => {
   const user = getCurrentUser();
@@ -34,48 +38,7 @@ const ElderNavbar = () => {
   );
 };
 
-const items = [
-  {
-    id: "n1",
-    icon: Calendar,
-    title: "Upcoming visit today at 3:00 PM",
-    text: "Sam will arrive for companionship. Please have your preferred activities ready.",
-    badge: "Today",
-    tone: "info",
-  },
-  {
-    id: "n2",
-    icon: ShoppingBasket,
-    title: "Grocery assistance available tomorrow",
-    text: "Would you like help picking up milk, bread, or medications?",
-    badge: "Suggestion",
-    tone: "suggest",
-  },
-  {
-    id: "n3",
-    icon: HeartHandshake,
-    title: "New friendly group walk this Saturday",
-    text: "Join a gentle 20-minute walk at the community park. Wheelchair friendly.",
-    badge: "Community",
-    tone: "highlight",
-  },
-  {
-    id: "n4",
-    icon: Home,
-    title: "Light housekeeping recommended",
-    text: "We can help tidy up living spaces and kitchen. Tap to request a visit.",
-    badge: "Tip",
-    tone: "suggest",
-  },
-  {
-    id: "n5",
-    icon: MessageSquare,
-    title: "New message from ElderEase Assistant",
-    text: "Hello! Remember you can ask for help anytime using the chat button.",
-    badge: "New",
-    tone: "info",
-  },
-];
+type NotificationItem = { id: string; icon: any; title: string; text: string; badge: string; tone: string };
 
 const toneClasses: Record<string, string> = {
   info: "border-blue-500/20 bg-blue-500/5",
@@ -85,6 +48,33 @@ const toneClasses: Record<string, string> = {
 
 const Notifications = () => {
   const user = getCurrentUser();
+  const [uid, setUid] = useState<string | null>(user?.id ?? null);
+  const [items, setItems] = useState<NotificationItem[] | null>(null);
+
+  useEffect(() => {
+    const unsub = subscribeToAuth((p: AuthProfile | null) => setUid(p?.uid ?? null));
+    return () => unsub();
+  }, []);
+
+  useEffect(() => {
+    if (!uid) { setItems([]); return; }
+    const q = query(collection(db, "assignments"), where("elderUserId", "==", uid), where("status", "==", "assigned"), orderBy("createdAt", "desc"));
+    const unsub = onSnapshot(q, (snap) => {
+      const arr: NotificationItem[] = snap.docs.map((d) => {
+        const a = d.data() as any;
+        return {
+          id: d.id,
+          icon: HeartHandshake,
+          title: `Service confirmed: ${Array.isArray(a.services) ? a.services.join(", ") : a.services}`,
+          text: `${a.startTimeText} - ${a.endTimeText} on ${a.serviceDateTS ? new Date(a.serviceDateTS).toLocaleDateString() : ""}`,
+          badge: "Confirmed",
+          tone: "info",
+        };
+      });
+      setItems(arr);
+    });
+    return () => unsub();
+  }, [uid]);
   const name = user?.name?.split(" ")[0] ?? "there";
   return (
     <div className="min-h-screen bg-gradient-to-b from-background to-muted/20">
@@ -97,7 +87,11 @@ const Notifications = () => {
          <p className="text-muted-foreground mb-6">Hi {name}, here are gentle reminders and helpful suggestions for your loved one's care.</p>
 
         <div className="space-y-3">
-          {items.map((n) => {
+          {items === null ? (
+            <div className="p-6 text-muted-foreground">Loading notifications…</div>
+          ) : items.length === 0 ? (
+            <div className="p-6 text-muted-foreground">No new notifications.</div>
+          ) : items.map((n) => {
             const Icon = n.icon;
             return (
               <div key={n.id} className={`rounded-xl border p-4 flex items-start gap-3 ${toneClasses[n.tone]}`}>
@@ -117,6 +111,7 @@ const Notifications = () => {
           })}
         </div>
       </main>
+      <ElderChatbot />
     </div>
   );
 };
