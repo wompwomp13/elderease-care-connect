@@ -19,8 +19,6 @@ import MySchedule from "@/pages/elder/MySchedule";
 import Dashboard from "@/pages/admin/Dashboard";
 import VolunteerApplications from "@/pages/admin/VolunteerApplications";
 import ServiceRequests from "@/pages/admin/ServiceRequests";
-import ChatbotLogs from "@/pages/admin/ChatbotLogs";
-import ContentManagement from "@/pages/admin/ContentManagement";
 import CompanionHome from "@/pages/companion/CompanionHome";
 import MyAssignments from "@/pages/companion/MyAssignments";
 import CompanionProfile from "@/pages/companion/Profile";
@@ -51,8 +49,7 @@ const App = () => (
           <Route path="/admin" element={<Dashboard />} />
           <Route path="/admin/applications" element={<VolunteerApplications />} />
           <Route path="/admin/requests" element={<ServiceRequests />} />
-          <Route path="/admin/chatbot" element={<ChatbotLogs />} />
-          <Route path="/admin/content" element={<ContentManagement />} />
+          
           <Route path="/companion" element={<CompanionHome />} />
           <Route path="/companion/assignments" element={<MyAssignments />} />
           <Route path="/companion/activity" element={<ActivityLog />} />

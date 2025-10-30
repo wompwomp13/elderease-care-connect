@@ -1,126 +1,198 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import AdminLayout from "@/components/layout/AdminLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Users, ClipboardList, TrendingUp, Clock, Star, Award, ChevronRight, ArrowUpRight, ArrowDownRight } from "lucide-react";
+import { Users, ClipboardList, Star, Award, ChevronRight, ArrowUpRight, ArrowDownRight, User as UserIcon } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line } from "recharts";
-import volunteerSarah from "@/assets/volunteer-sarah.jpg";
-import volunteerJohn from "@/assets/volunteer-john.jpg";
-import volunteerEmily from "@/assets/volunteer-emily.jpg";
+import { collection, onSnapshot, query, where } from "firebase/firestore";
+import { db } from "@/lib/firebase";
 
 const Dashboard = () => {
   const [expandedVolunteer, setExpandedVolunteer] = useState<string | null>(null);
 
+  // Live collections
+  const [requests, setRequests] = useState<any[] | null>(null);
+  const [approvedVolunteers, setApprovedVolunteers] = useState<any[] | null>(null);
+  const [assignments, setAssignments] = useState<any[] | null>(null);
+  const [ratingsMap, setRatingsMap] = useState<Record<string, { sum: number; count: number }>>({});
+
+  // Subscribe to Firestore
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, "serviceRequests"), (snap) => {
+      setRequests(snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })));
+    });
+    return () => unsub();
+  }, []);
+
+  useEffect(() => {
+    const qv = query(collection(db, "pendingVolunteers"), where("status", "==", "approved"));
+    const unsub = onSnapshot(qv, (snap) => {
+      setApprovedVolunteers(snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })));
+    });
+    return () => unsub();
+  }, []);
+
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, "assignments"), (snap) => {
+      setAssignments(snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })));
+    });
+    return () => unsub();
+  }, []);
+
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, "ratings"), (snap) => {
+      const map: Record<string, { sum: number; count: number }> = {};
+      snap.docs.forEach((doc) => {
+        const r = doc.data() as any;
+        const email = (r.volunteerEmail || "").toLowerCase();
+        const val = Number(r.rating) || 0;
+        if (!email || val <= 0) return;
+        if (!map[email]) map[email] = { sum: 0, count: 0 };
+        map[email].sum += val;
+        map[email].count += 1;
+      });
+      setRatingsMap(map);
+    });
+    return () => unsub();
+  }, []);
+
+  // Derived metrics
+  const totalRequests = requests?.length ?? 0;
+  const pendingRequests = (requests || []).filter((r) => (r.status || "pending") === "pending").length;
+  const activeVolunteers = approvedVolunteers?.length ?? 0;
+
+  const now = new Date();
+  const weekAgoMs = now.getTime() - 6 * 24 * 60 * 60 * 1000;
+  const isCompletedConfirmed = (a: any) => a.status === "completed" && a.guardianConfirmed === true;
+  const getDateMs = (a: any) => {
+    const ms = typeof a.serviceDateTS === "number" ? a.serviceDateTS : (a.serviceDateTS?.toMillis?.() ?? 0);
+    return ms || 0;
+  };
+  const completedThisWeek = (assignments || []).filter((a) => isCompletedConfirmed(a) && getDateMs(a) >= weekAgoMs).length;
+
   const stats = [
-    { 
-      title: "Total Service Requests", 
-      value: "156", 
-      icon: ClipboardList, 
-      change: "+12%", 
-      trend: "up",
-      color: "from-emerald-500 to-emerald-600",
-      subtitle: "from last month" 
-    },
-    { 
-      title: "Active Volunteers", 
-      value: "42", 
-      icon: Users, 
-      change: "+5", 
-      trend: "up",
-      color: "from-blue-500 to-blue-600",
-      subtitle: "this week" 
-    },
-    { 
-      title: "Completion Rate", 
-      value: "94%", 
-      icon: TrendingUp, 
-      change: "+3%", 
-      trend: "up",
-      color: "from-purple-500 to-purple-600",
-      subtitle: "from last month" 
-    },
-    { 
-      title: "Avg Response Time", 
-      value: "2.4hrs", 
-      icon: Clock, 
-      change: "-0.5hrs", 
-      trend: "down",
-      color: "from-orange-500 to-orange-600",
-      subtitle: "improvement" 
-    },
+    { title: "Total Service Requests", value: String(totalRequests), icon: ClipboardList, change: "", trend: "up", color: "from-emerald-500 to-emerald-600", subtitle: "live" },
+    { title: "Active Volunteers", value: String(activeVolunteers), icon: Users, change: "", trend: "up", color: "from-blue-500 to-blue-600", subtitle: "approved" },
+    { title: "Completed This Week", value: String(completedThisWeek), icon: Star, change: "", trend: "up", color: "from-purple-500 to-purple-600", subtitle: "confirmed" },
+    { title: "Pending Requests", value: String(pendingRequests), icon: ClipboardList, change: "", trend: "up", color: "from-orange-500 to-orange-600", subtitle: "awaiting assignment" },
   ];
 
-  const weeklyData = [
-    { day: "Sun", requests: 12 },
-    { day: "Mon", requests: 28 },
-    { day: "Tue", requests: 24 },
-    { day: "Wed", requests: 32 },
-    { day: "Thu", requests: 18 },
-    { day: "Fri", requests: 22 },
-    { day: "Sat", requests: 20 },
-  ];
+  // Weekly activity (last 7 days)
+  const weekdayShort = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"] as const;
+  const weeklyData = useMemo(() => {
+    const base = Array.from({ length: 7 }).map((_, i) => {
+      const d = new Date(now.getTime() - (6 - i) * 24 * 60 * 60 * 1000);
+      return { day: weekdayShort[d.getDay()], key: d.toDateString(), requests: 0 };
+    });
+    (assignments || []).forEach((a) => {
+      if (!isCompletedConfirmed(a)) return;
+      const ms = getDateMs(a);
+      if (!ms || ms < weekAgoMs) return;
+      const ds = new Date(ms).toDateString();
+      const idx = base.findIndex((b) => b.key === ds);
+      if (idx >= 0) base[idx].requests += 1;
+    });
+    return base.map(({ day, requests }) => ({ day, requests }));
+  }, [assignments]);
 
-  const monthlyTrend = [
-    { month: "Jan", services: 120 },
-    { month: "Feb", services: 145 },
-    { month: "Mar", services: 156 },
-  ];
+  // Monthly trend (last 6 months)
+  const monthlyTrend = useMemo(() => {
+    const months: { month: string; services: number; key: string }[] = [];
+    const cur = new Date(now);
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(cur.getFullYear(), cur.getMonth() - i, 1);
+      const key = `${d.getFullYear()}-${d.getMonth()}`;
+      const label = d.toLocaleString(undefined, { month: "short" });
+      months.push({ month: label, services: 0, key });
+    }
+    (assignments || []).forEach((a) => {
+      if (!isCompletedConfirmed(a)) return;
+      const ms = getDateMs(a);
+      if (!ms) return;
+      const d = new Date(ms);
+      const key = `${d.getFullYear()}-${d.getMonth()}`;
+      const idx = months.findIndex((m) => m.key === key);
+      if (idx >= 0) months[idx].services += 1;
+    });
+    return months.map(({ month, services }) => ({ month, services }));
+  }, [assignments]);
 
-  const topVolunteers = [
-    {
-      id: "1",
-      name: "Sarah Williams",
-      rating: 4.9,
-      services: 28,
-      image: volunteerSarah,
-      specialty: "Companionship & Socialization",
-      experience: "3 years",
-      badge: "Top Performer",
-      reviews: 24,
-      completionRate: 98,
-      about: "I work with the following requests: Success in work and personal life, in work-related issues, fears, depression, anxiety, panic attacks, self-harm, unexplained problems, conflict relationships, psychosomatic illnesses (PTSD), grief, loss, trust issues, etc.",
-      education: "Certified Elder Care Specialist",
-      method: "Person-centered approach with focus on building meaningful connections"
-    },
-    {
-      id: "2",
-      name: "John Martinez",
-      rating: 4.8,
-      services: 25,
-      image: volunteerJohn,
-      specialty: "Running Errands & Light Housekeeping",
-      experience: "2.5 years",
-      badge: "Rising Star",
-      reviews: 21,
-      completionRate: 96,
-      about: "Dedicated to helping elderly individuals maintain their independence. Specialized in practical assistance and creating safe, comfortable home environments.",
-      education: "Healthcare Assistant Certification",
-      method: "Efficient and compassionate care with attention to detail"
-    },
-    {
-      id: "3",
-      name: "Emily Chen",
-      rating: 4.8,
-      services: 23,
-      image: volunteerEmily,
-      specialty: "Home Visits & Healthcare Support",
-      experience: "2 years",
-      badge: "Community Favorite",
-      reviews: 20,
-      completionRate: 97,
-      about: "Passionate about elderly care with a focus on health monitoring and emotional support. Creating a positive impact in the lives of seniors.",
-      education: "Registered Nurse, Gerontology Specialist",
-      method: "Holistic care approach combining medical expertise with empathy"
-    },
-  ];
+  // Top performers (top 3 by avg rating then services completed)
+  const tasksMap: Record<string, number> = useMemo(() => {
+    const counts: Record<string, number> = {};
+    (assignments || []).forEach((a) => {
+      if (!isCompletedConfirmed(a)) return;
+      const email = (a.volunteerEmail || "").toLowerCase();
+      if (!email) return;
+      counts[email] = (counts[email] || 0) + 1;
+    });
+    return counts;
+  }, [assignments]);
 
-  const topServices = [
-    { name: "Companionship", requests: 45, percentage: 28.8 },
-    { name: "Running Errands", requests: 38, percentage: 24.4 },
-    { name: "Light Housekeeping", requests: 32, percentage: 20.5 },
-    { name: "Home Visits", requests: 25, percentage: 16.0 },
-    { name: "Socialization", requests: 16, percentage: 10.3 },
-  ];
+  const topVolunteers = useMemo(() => {
+    const list = (approvedVolunteers || []).map((v) => {
+      const emailKey = (v.email || "").toLowerCase();
+      const r = ratingsMap[emailKey];
+      const avg = r ? r.sum / r.count : null;
+      const count = tasksMap[emailKey] || 0;
+      return {
+        id: v.id,
+        name: v.fullName || v.name || v.email || "Volunteer",
+        rating: avg,
+        reviews: r?.count || 0,
+        services: count,
+        specialty: Array.isArray(v.services) ? v.services.slice(0,2).join(" & ") : (v.services || "Care Services"),
+        badge: avg && avg >= 4.8 ? "Top Performer" : avg && avg >= 4.5 ? "Rising Star" : "Volunteer",
+        about: v.bio || "Reliable and compassionate volunteer.",
+        education: v.education || "",
+        method: v.method || "Client-centered care",
+      };
+    })
+    .filter((v) => v.rating != null)
+    .sort((a, b) => (b.rating! - a.rating!) || (b.services - a.services))
+    .slice(0, 3);
+    return list;
+  }, [approvedVolunteers, ratingsMap, tasksMap]);
+
+  // Normalize service names to canonical ids and labels
+  const toServiceId = (nameOrId: string): string => {
+    const v = (nameOrId || "").toLowerCase();
+    if (v.includes("companionship")) return "companionship";
+    if (v.includes("housekeeping")) return "housekeeping";
+    if (v.includes("errand")) return "errands";
+    if (v.includes("visit")) return "visits";
+    if (v.includes("social")) return "socialization";
+    return v;
+  };
+  const toDisplayName = (id: string): string => {
+    switch (id) {
+      case "companionship": return "Companionship";
+      case "housekeeping": return "Light Housekeeping";
+      case "errands": return "Running Errands";
+      case "visits": return "Home Visits";
+      case "socialization": return "Socialization";
+      default: return id?.charAt(0).toUpperCase() + id?.slice(1);
+    }
+  };
+
+  // Most requested services (live from serviceRequests)
+  const topServices = useMemo(() => {
+    const counts: Record<string, number> = {};
+    (requests || []).forEach((r) => {
+      const arr: string[] = Array.isArray(r.services) ? r.services : (r.service ? [r.service] : []);
+      arr.forEach((s) => {
+        const id = toServiceId(s);
+        if (!id) return;
+        counts[id] = (counts[id] || 0) + 1;
+      });
+    });
+    const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+    const total = entries.reduce((acc, [, n]) => acc + n, 0) || 1;
+    return entries.map(([id, n]) => ({ name: toDisplayName(id), requests: n, percentage: Math.round((n / total) * 1000) / 10 }));
+  }, [requests]);
+
+
+  
 
   return (
     <AdminLayout>
@@ -164,7 +236,7 @@ const Dashboard = () => {
           <Card className="shadow-lg border-0">
             <CardHeader>
               <CardTitle className="text-lg">Weekly Activity</CardTitle>
-              <p className="text-sm text-muted-foreground">Service requests this week</p>
+              <p className="text-sm text-muted-foreground">Completed services this week</p>
             </CardHeader>
             <CardContent>
               <ResponsiveContainer width="100%" height={240}>
@@ -239,24 +311,10 @@ const Dashboard = () => {
                   // Expanded View
                   <div className="p-6">
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                      {/* Image Gallery */}
-                      <div className="space-y-2">
-                        <img 
-                          src={volunteer.image} 
-                          alt={volunteer.name}
-                          className="w-full h-64 object-cover rounded-lg"
-                        />
-                        <div className="grid grid-cols-2 gap-2">
-                          <img 
-                            src={volunteer.image} 
-                            alt={`${volunteer.name} 2`}
-                            className="w-full h-32 object-cover rounded-lg opacity-70"
-                          />
-                          <img 
-                            src={volunteer.image} 
-                            alt={`${volunteer.name} 3`}
-                            className="w-full h-32 object-cover rounded-lg opacity-70"
-                          />
+                      {/* Profile Icon */}
+                      <div className="space-y-2 flex items-center justify-center">
+                        <div className="h-64 w-64 rounded-full bg-muted grid place-items-center">
+                          <UserIcon className="h-24 w-24 text-muted-foreground" />
                         </div>
                       </div>
 
@@ -266,16 +324,14 @@ const Dashboard = () => {
                           <div className="flex items-start justify-between mb-2">
                             <div>
                               <h3 className="text-2xl font-bold">{volunteer.name}</h3>
-                              <p className="text-sm text-muted-foreground">{volunteer.experience} of experience</p>
+                              <p className="text-sm text-muted-foreground">{volunteer.reviews} reviews</p>
                             </div>
                             <div className="flex items-center gap-2">
                               <Award className="h-5 w-5 text-yellow-500" />
                               <span className="text-sm font-medium">{volunteer.badge}</span>
                             </div>
                           </div>
-                          <div className="text-lg font-semibold text-primary">
-                            Individual consultation: 60 mins
-                          </div>
+                          <div className="text-sm text-muted-foreground">Specialties: {volunteer.specialty}</div>
                         </div>
 
                         <div className="grid grid-cols-2 gap-4">
@@ -307,11 +363,8 @@ const Dashboard = () => {
                               <div className="space-y-1">
                                 <div className="flex items-center gap-2">
                                   <Star className="h-4 w-4 text-yellow-500 fill-yellow-500" />
-                                  <span className="text-sm font-medium">{volunteer.rating} / 5.0</span>
+                                  <span className="text-sm font-medium">{volunteer.rating?.toFixed(1)} / 5.0</span>
                                   <span className="text-xs text-muted-foreground">({volunteer.reviews} reviews)</span>
-                                </div>
-                                <div className="text-sm">
-                                  <span className="font-medium">{volunteer.completionRate}%</span> completion rate
                                 </div>
                                 <div className="text-sm text-muted-foreground">{volunteer.services} services completed</div>
                               </div>
@@ -326,11 +379,9 @@ const Dashboard = () => {
                   <CardContent className="p-0">
                     <div className="flex items-center gap-4 p-4">
                       <div className="relative">
-                        <img 
-                          src={volunteer.image} 
-                          alt={volunteer.name}
-                          className="w-16 h-16 rounded-full object-cover"
-                        />
+                        <div className="w-16 h-16 rounded-full bg-muted grid place-items-center">
+                          <UserIcon className="h-7 w-7 text-muted-foreground" />
+                        </div>
                         {index === 0 && (
                           <div className="absolute -top-1 -right-1 w-6 h-6 bg-yellow-500 rounded-full flex items-center justify-center">
                             <Award className="h-3 w-3 text-white" />
@@ -348,10 +399,9 @@ const Dashboard = () => {
                         <div className="flex items-center gap-3 mt-2 text-xs">
                           <div className="flex items-center gap-1">
                             <Star className="h-3 w-3 text-yellow-500 fill-yellow-500" />
-                            <span className="font-medium">{volunteer.rating}</span>
+                            <span className="font-medium">{volunteer.rating?.toFixed(1)}</span>
                           </div>
                           <span className="text-muted-foreground">{volunteer.services} services</span>
-                          <span className="text-muted-foreground">{volunteer.completionRate}% rate</span>
                         </div>
                       </div>
                       <ChevronRight className={`h-5 w-5 text-muted-foreground transition-transform ${

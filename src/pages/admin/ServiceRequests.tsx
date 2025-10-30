@@ -9,6 +9,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { db } from "@/lib/firebase";
 import { addDoc, collection, doc, getDocs, limit, onSnapshot, orderBy, query, serverTimestamp, updateDoc, where } from "firebase/firestore";
+import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "@/components/ui/pagination";
 
 const ServiceRequests = () => {
   const { toast } = useToast();
@@ -16,6 +17,8 @@ const ServiceRequests = () => {
   const [volunteers, setVolunteers] = useState<any[] | null>(null);
   const [ratingsMap, setRatingsMap] = useState<Record<string, { avg: number; count: number }>>({});
   const [tasksMap, setTasksMap] = useState<Record<string, number>>({});
+  const [page, setPage] = useState<number>(1);
+  const perPage = 5;
 
   useEffect(() => {
     const q = query(collection(db, "serviceRequests"), orderBy("createdAt", "desc"));
@@ -24,6 +27,8 @@ const ServiceRequests = () => {
     });
     return () => unsub();
   }, []);
+
+  useEffect(() => { setPage(1); }, [/* reset on new data */ requests?.length]);
 
   useEffect(() => {
     const q = query(collection(db, "pendingVolunteers"), where("status", "==", "approved"));
@@ -211,7 +216,14 @@ const ServiceRequests = () => {
               <Inbox className="h-10 w-10 text-muted-foreground mb-2" />
               <p className="text-muted-foreground">No service requests yet.</p>
             </div>
-          ) : requests.map((request) => (
+          ) : (() => {
+            const totalPages = Math.max(1, Math.ceil(requests.length / perPage));
+            const safePage = Math.min(page, totalPages);
+            const start = (safePage - 1) * perPage;
+            const pageItems = requests.slice(start, start + perPage);
+            return (
+              <>
+                {pageItems.map((request) => (
             <Card key={request.id} className={`border-l-4 ${getServiceColor((request.services?.[0]) || request.service || "")}`}>
               <CardHeader>
                 <div className="flex items-start justify-between">
@@ -281,8 +293,8 @@ const ServiceRequests = () => {
                                       const matches = reqServiceIds.filter((id: string) => volServiceIds.includes(id));
                                       const matchPct = reqServiceIds.length ? Math.round((matches.length / reqServiceIds.length) * 100) : 0;
                                       return (
-                                        <div key={v.id} className="rounded-2xl border bg-card/70 backdrop-blur shadow-sm hover:shadow-md transition-shadow overflow-hidden">
-                                          <div className="p-5">
+                                        <div key={v.id} className="rounded-2xl border bg-card/70 backdrop-blur shadow-sm hover:shadow-md transition-shadow overflow-hidden select-none">
+                                          <div className="p-5 cursor-grab active:cursor-grabbing">
                                             <div className="flex items-start justify-between mb-3">
                                               <div className="flex items-center gap-3">
                                                 <div className="h-12 w-12 rounded-full bg-muted grid place-items-center">
@@ -323,7 +335,7 @@ const ServiceRequests = () => {
                                               <span>{matchPct}% match • {matches.map((m) => m[0]?.toUpperCase() + m.slice(1)).join(", ") || "No match"}</span>
                                             </div>
                                           </div>
-                                          <div className="flex items-center justify-between px-5 py-3 bg-muted/30">
+                                          <div className="flex items-center justify-between px-5 py-3 bg-muted/30 cursor-default select-auto">
                                             <Dialog>
                                               <DialogTrigger asChild>
                                                 <button className="text-sm text-primary hover:underline font-medium">Read more</button>
@@ -386,6 +398,26 @@ const ServiceRequests = () => {
               </CardContent>
             </Card>
           ))}
+                <Pagination className="mt-2">
+                  <PaginationContent>
+                    <PaginationItem>
+                      <PaginationPrevious onClick={(e) => { e.preventDefault(); setPage(Math.max(1, safePage - 1)); }} href="#" />
+                    </PaginationItem>
+                    {Array.from({ length: totalPages }).map((_, i) => (
+                      <PaginationItem key={i}>
+                        <PaginationLink href="#" isActive={safePage === (i + 1)} onClick={(e) => { e.preventDefault(); setPage(i + 1); }}>
+                          {i + 1}
+                        </PaginationLink>
+                      </PaginationItem>
+                    ))}
+                    <PaginationItem>
+                      <PaginationNext onClick={(e) => { e.preventDefault(); setPage(Math.min(totalPages, safePage + 1)); }} href="#" />
+                    </PaginationItem>
+                  </PaginationContent>
+                </Pagination>
+              </>
+            );
+          })()}
         </div>
       </div>
     </AdminLayout>

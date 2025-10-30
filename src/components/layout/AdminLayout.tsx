@@ -13,8 +13,6 @@ const AdminLayout = ({ children }: { children: React.ReactNode }) => {
     { path: "/admin", icon: LayoutDashboard, label: "Dashboard" },
     { path: "/admin/applications", icon: Users, label: "Volunteer Applications" },
     { path: "/admin/requests", icon: ClipboardList, label: "Service Requests" },
-    { path: "/admin/chatbot", icon: MessageSquare, label: "Chatbot Logs" },
-    { path: "/admin/content", icon: FileEdit, label: "Manage Content" },
   ];
 
   return (

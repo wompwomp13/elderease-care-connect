@@ -43,6 +43,8 @@ const CompanionHome = () => {
   const displayName = user?.name ?? "Companion";
   const [email, setEmail] = useState<string | null>(user?.email ?? null);
   const [assignments, setAssignments] = useState<any[]>([]);
+  const [ratingAvg, setRatingAvg] = useState<number | null>(null);
+  const [ratingCount, setRatingCount] = useState<number>(0);
 
   useEffect(() => {
     const unsub = subscribeToAuth((p: AuthProfile | null) => setEmail(p?.email?.toLowerCase() ?? null));
@@ -51,14 +53,51 @@ const CompanionHome = () => {
 
   useEffect(() => {
     if (!email) { setAssignments([]); return; }
-    const q = query(collection(db, "assignments"), where("volunteerEmail", "==", email));
-    const unsub = onSnapshot(q, (snap) => setAssignments(snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }))));
-    return () => unsub();
+    const qA = query(collection(db, "assignments"), where("volunteerEmail", "==", email));
+    const unsubA = onSnapshot(qA, (snap) => setAssignments(snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }))));
+    const qR = query(collection(db, "ratings"), where("volunteerEmail", "==", email));
+    const unsubR = onSnapshot(qR, (snap) => {
+      let sum = 0, count = 0;
+      snap.docs.forEach((doc) => {
+        const r = doc.data() as any;
+        const v = Number(r.rating) || 0;
+        if (v > 0) { sum += v; count += 1; }
+      });
+      setRatingAvg(count ? sum / count : null);
+      setRatingCount(count);
+    });
+    return () => { unsubA(); unsubR(); };
   }, [email]);
 
-  const now = new Date();
-  const weekEnd = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
-  const weekAssignments = assignments.filter((a) => typeof a.serviceDateTS === "number" && a.serviceDateTS >= now.setHours(0,0,0,0) && a.serviceDateTS <= weekEnd.getTime());
+  const todayStartMs = new Date().setHours(0,0,0,0);
+  const weekEndMs = new Date(Date.now() + 6 * 24 * 60 * 60 * 1000).setHours(23,59,59,999);
+  const weekAssignments = assignments.filter((a) => typeof a.serviceDateTS === "number" && a.serviceDateTS >= todayStartMs && a.serviceDateTS <= weekEndMs);
+
+  const isCompletedConfirmed = (a: any) => a.status === "completed" && a.guardianConfirmed === true;
+  const durationMinutes = (a: any) => {
+    const s = String(a.startTime24 || "");
+    const e = String(a.endTime24 || "");
+    if (!s.includes(":") || !e.includes(":")) return 0;
+    const [sh, sm] = s.split(":").map((t: string) => parseInt(t, 10));
+    const [eh, em] = e.split(":").map((t: string) => parseInt(t, 10));
+    const start = sh * 60 + sm;
+    const end = eh * 60 + em;
+    const diff = end - start;
+    return Number.isFinite(diff) && diff > 0 ? diff : 0;
+  };
+
+  const hoursThisWeek = weekAssignments.reduce((acc, a) => acc + durationMinutes(a), 0) / 60;
+  const totalCompletedServices = assignments.filter(isCompletedConfirmed).length;
+  const totalCompletedHours = assignments.filter(isCompletedConfirmed).reduce((acc, a) => acc + durationMinutes(a), 0) / 60;
+  const peopleHelped = Array.from(new Set(assignments.filter(isCompletedConfirmed).map((a) => a.elderName).filter(Boolean))).length;
+
+  const getLevel = (hours: number, services: number) => {
+    if (hours >= 100 || services >= 50) return { label: "Community Hero", next: "Keep inspiring!" };
+    if (hours >= 40 || services >= 20) return { label: "Impact Maker", next: "Next: 100 hours or 50 services" };
+    if (hours >= 10 || services >= 5) return { label: "Rising Helper", next: "Next: 40 hours or 20 services" };
+    return { label: "Starter", next: "Next: 10 hours or 5 services" };
+  };
+  const level = getLevel(totalCompletedHours, totalCompletedServices);
   
   return (
     <div className="min-h-screen bg-gradient-to-b from-background to-muted/20">
@@ -135,7 +174,7 @@ const CompanionHome = () => {
               <TrendingUp className="h-5 w-5 text-green-600" />
             </div>
             <h3 className="text-sm text-muted-foreground mb-1">Hours This Week</h3>
-            <p className="text-2xl font-bold">4.5</p>
+            <p className="text-2xl font-bold">{hoursThisWeek.toFixed(1)}</p>
           </div>
 
           <div className="bg-gradient-to-br from-amber-500/10 to-amber-500/5 p-6 rounded-2xl border border-amber-500/20">
@@ -146,7 +185,7 @@ const CompanionHome = () => {
               <Star className="h-5 w-5 text-amber-600 fill-amber-600" />
             </div>
             <h3 className="text-sm text-muted-foreground mb-1">Total Impact</h3>
-            <p className="text-2xl font-bold">45 Visits</p>
+            <p className="text-2xl font-bold">{totalCompletedServices} Visits</p>
           </div>
         </div>
 
@@ -168,7 +207,15 @@ const CompanionHome = () => {
                       <p className="font-medium">{Array.isArray(a.services) ? a.services.join(", ") : a.services}</p>
                       <p className="text-muted-foreground">{new Date(a.serviceDateTS).toLocaleDateString()} • {a.startTimeText} - {a.endTimeText}</p>
                     </div>
-                    <span className="text-xs px-2 py-1 rounded-full bg-primary/10 text-primary">Assigned</span>
+                    {a.status === "completed" ? (
+                      a.guardianConfirmed ? (
+                        <span className="text-xs px-2 py-1 rounded-full bg-green-100 text-green-700">Completed</span>
+                      ) : (
+                        <span className="text-xs px-2 py-1 rounded-full bg-amber-100 text-amber-700">Awaiting confirm</span>
+                      )
+                    ) : (
+                      <span className="text-xs px-2 py-1 rounded-full bg-primary/10 text-primary">Assigned</span>
+                    )}
                   </div>
                 ))}
               </div>
@@ -187,17 +234,17 @@ const CompanionHome = () => {
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-muted-foreground">Total Hours</span>
-                  <span className="text-lg font-bold">87.5h</span>
+                  <span className="text-lg font-bold">{totalCompletedHours.toFixed(1)}h</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-muted-foreground">People Helped</span>
-                  <span className="text-lg font-bold">12</span>
+                  <span className="text-lg font-bold">{peopleHelped}</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-muted-foreground">Rating</span>
                   <div className="flex items-center gap-1">
                     <Star className="h-4 w-4 fill-amber-500 text-amber-500" />
-                    <span className="text-lg font-bold">4.9</span>
+                    <span className="text-lg font-bold">{ratingAvg ? ratingAvg.toFixed(1) : "—"}</span>
                   </div>
                 </div>
               </div>
@@ -210,13 +257,17 @@ const CompanionHome = () => {
                 <h2 className="text-lg font-bold">Keep Going!</h2>
               </div>
               <p className="text-sm text-muted-foreground mb-4">
-                You're making a real difference in people's lives. Thank you for your dedication!
+                You're making a real difference. Based on your impact so far, you're at the <span className="font-medium text-amber-700">{level.label}</span> level.
               </p>
               <div className="flex items-center gap-2 p-3 bg-background rounded-lg">
                 <Award className="h-8 w-8 text-amber-600" />
                 <div className="flex-1">
-                  <p className="text-sm font-medium">Super Volunteer</p>
-                  <p className="text-xs text-muted-foreground">50+ hours milestone</p>
+                  <p className="text-sm font-medium">Next milestone</p>
+                  <p className="text-xs text-muted-foreground">{level.next}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-xs text-muted-foreground">Services: {totalCompletedServices}</p>
+                  <p className="text-xs text-muted-foreground">Hours: {totalCompletedHours.toFixed(1)}h</p>
                 </div>
               </div>
             </div>

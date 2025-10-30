@@ -9,6 +9,7 @@ import { db } from "@/lib/firebase";
 import { collection, onSnapshot, orderBy, query, Timestamp, doc, updateDoc, serverTimestamp } from "firebase/firestore";
 import { format } from "date-fns";
 import { Input } from "@/components/ui/input";
+import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "@/components/ui/pagination";
 
 type PendingVolunteer = {
   id: string;
@@ -28,6 +29,8 @@ const VolunteerApplications = () => {
   const [applications, setApplications] = useState<PendingVolunteer[] | null>(null);
   const [statusFilter, setStatusFilter] = useState<"all" | "pending" | "approved" | "rejected">("all");
   const [search, setSearch] = useState("");
+  const [page, setPage] = useState<number>(1);
+  const perPage = 5;
 
   useEffect(() => {
     const q = query(collection(db, "pendingVolunteers"), orderBy("createdAt", "desc"));
@@ -37,6 +40,9 @@ const VolunteerApplications = () => {
     });
     return () => unsub();
   }, []);
+
+  // Reset page when filters change
+  useEffect(() => { setPage(1); }, [statusFilter, search]);
 
   const handleApprove = async (id: string, name: string) => {
     try {
@@ -106,14 +112,21 @@ const VolunteerApplications = () => {
           </div>
         ) : (
           <div className="grid gap-6">
-            {applications
-              .filter((app) => statusFilter === "all" ? true : app.status === statusFilter)
-              .filter((app) => {
-                const q = search.trim().toLowerCase();
-                if (!q) return true;
-                return app.fullName.toLowerCase().includes(q) || app.email.toLowerCase().includes(q);
-              })
-              .map((app) => (
+            {(() => {
+              const filtered = applications
+                .filter((app) => statusFilter === "all" ? true : app.status === statusFilter)
+                .filter((app) => {
+                  const q = search.trim().toLowerCase();
+                  if (!q) return true;
+                  return app.fullName.toLowerCase().includes(q) || app.email.toLowerCase().includes(q);
+                });
+              const totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
+              const safePage = Math.min(page, totalPages);
+              const start = (safePage - 1) * perPage;
+              const pageItems = filtered.slice(start, start + perPage);
+              return (
+                <>
+                  {pageItems.map((app) => (
               <Card key={app.id} className="border-l-4 border-l-primary">
               <CardHeader>
                 <div className="flex items-start justify-between">
@@ -177,7 +190,27 @@ const VolunteerApplications = () => {
                 )}
               </CardContent>
             </Card>
-            ))}
+                  ))}
+                  <Pagination className="mt-2">
+                    <PaginationContent>
+                      <PaginationItem>
+                        <PaginationPrevious onClick={(e) => { e.preventDefault(); setPage(Math.max(1, safePage - 1)); }} href="#" />
+                      </PaginationItem>
+                      {Array.from({ length: totalPages }).map((_, i) => (
+                        <PaginationItem key={i}>
+                          <PaginationLink href="#" isActive={safePage === (i + 1)} onClick={(e) => { e.preventDefault(); setPage(i + 1); }}>
+                            {i + 1}
+                          </PaginationLink>
+                        </PaginationItem>
+                      ))}
+                      <PaginationItem>
+                        <PaginationNext onClick={(e) => { e.preventDefault(); setPage(Math.min(totalPages, safePage + 1)); }} href="#" />
+                      </PaginationItem>
+                    </PaginationContent>
+                  </Pagination>
+                </>
+              );
+            })()}
           </div>
         )}
       </div>
