@@ -271,6 +271,46 @@ const CompanionHome = () => {
                 </div>
               </div>
             </div>
+
+            {/* Dynamic Pricing */}
+            <div className="bg-card p-6 rounded-2xl border">
+              <div className="flex items-center gap-2 mb-2">
+                <TrendingUp className="h-5 w-5 text-primary" />
+                <h2 className="text-lg font-bold">Dynamic Pricing</h2>
+              </div>
+              <p className="text-sm text-muted-foreground mb-3">Fair rate boosts based on your service record and ratings.</p>
+              <div className="space-y-3">
+                <div className="rounded-xl border p-3">
+                  <div className="flex items-center justify-between">
+                    <span className="font-medium">Newbie</span>
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-muted text-foreground">Base rate</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-0.5">0–4 services • any rating</p>
+                </div>
+                <div className="rounded-xl border p-3">
+                  <div className="flex items-center justify-between">
+                    <span className="font-medium">Reliable</span>
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-700 dark:text-emerald-400">+5%</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-0.5">5–19 services • avg rating ≥ 4.2</p>
+                </div>
+                <div className="rounded-xl border p-3">
+                  <div className="flex items-center justify-between">
+                    <span className="font-medium">Experienced</span>
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-700 dark:text-blue-400">+8%</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-0.5">20–39 services • avg rating ≥ 4.4</p>
+                </div>
+                <div className="rounded-xl border p-3">
+                  <div className="flex items-center justify-between">
+                    <span className="font-medium">Top Performer</span>
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-700 dark:text-amber-400">+12%</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-0.5">40+ services • avg rating ≥ 4.6</p>
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground mt-3">These adjustments apply to the base hourly rate.</p>
+            </div>
           </div>
         </div>
       </main>

@@ -165,6 +165,7 @@ const ServiceRequests = () => {
           endTime24: req.endTime24 || null,
           startTimeText: req.startTimeText || null,
           endTimeText: req.endTimeText || null,
+          notes: req.notes || null,
           status: "assigned",
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),

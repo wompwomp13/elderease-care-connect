@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import { getCurrentUser, logout } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
@@ -104,6 +104,23 @@ const RequestService = () => {
   const [clientName, setClientName] = useState("");
   const [clientAge, setClientAge] = useState("");
   const [clientAddress, setClientAddress] = useState("");
+  const [serviceHoursById, setServiceHoursById] = useState<Record<string, number>>({});
+
+  const getTotalSelectedHours = (): number => {
+    return selectedServices.reduce((sum, id) => sum + (Number(serviceHoursById[id]) || 0), 0);
+  };
+
+  const computeEndFromStartAndHours = (start: string | null, totalHours: number): string | null => {
+    if (!start || !Number.isFinite(totalHours) || totalHours <= 0) return start;
+    const [sh, sm] = start.split(":").map((x) => parseInt(x || "0", 10));
+    const startMinutes = (sh * 60) + sm;
+    const endMinutes = startMinutes + Math.round(totalHours * 60);
+    const eh = Math.floor((endMinutes % (24 * 60)) / 60);
+    const em = endMinutes % 60;
+    const hh = String(eh).padStart(2, "0");
+    const mm = String(em).padStart(2, "0");
+    return `${hh}:${mm}`;
+  };
 
   const toggleService = (serviceId: string) => {
     setSelectedServices(prev =>
@@ -111,7 +128,30 @@ const RequestService = () => {
         ? prev.filter(id => id !== serviceId)
         : [...prev, serviceId]
     );
+    setServiceHoursById(prev => {
+      const next = { ...prev };
+      if (serviceId in next) {
+        // keep existing value when toggling on/off; it will be ignored if unselected
+        return next;
+      }
+      next[serviceId] = 1; // default 1 hour for new selection
+      return next;
+    });
   };
+
+  // Auto-calc end time whenever start time or per-service hours change
+  useEffect(() => {
+    const total = getTotalSelectedHours();
+    const nextEnd = computeEndFromStartAndHours(startTime, total);
+    if (nextEnd && nextEnd !== endTime) {
+      setEndTime(nextEnd);
+    }
+    // If no total or start, clear end
+    if ((!startTime || !Number.isFinite(total) || total <= 0) && endTime) {
+      setEndTime(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [startTime, selectedServices, serviceHoursById]);
 
   const handleSubmit = () => {
     if (!clientName.trim() || !clientAge.trim() || !clientAddress.trim()) {
@@ -139,7 +179,22 @@ const RequestService = () => {
       toast({ title: "End time must be after start time", variant: "destructive" });
       return;
     }
+    // Validate hours for selected services
+    const invalid = selectedServices.some(id => {
+      const val = Number(serviceHoursById[id]);
+      return !Number.isFinite(val) || val <= 0;
+    });
+    if (invalid) {
+      toast({ title: "Set hours per service", description: "Each selected service must have hours > 0.", variant: "destructive" });
+      return;
+    }
     const serviceNames = selectedServices.map(id => services.find(s => s.id === id)?.name).filter(Boolean) as string[];
+    // Build mapping by service display name for clarity
+    const perServiceHoursByName: Record<string, number> = {};
+    selectedServices.forEach((id) => {
+      const name = services.find(s => s.id === id)?.name;
+      if (name) perServiceHoursByName[name] = Number(serviceHoursById[id]) || 0;
+    });
     const currentUser = user;
     const payload = {
       userId: currentUser?.id ?? null,
@@ -147,6 +202,7 @@ const RequestService = () => {
       elderAge: clientAge.trim(),
       address: clientAddress.trim(),
       services: serviceNames,
+      perServiceHoursByName,
       serviceDateDisplay: format(selectedDate, "PPP"),
       serviceDateTS: selectedDate.getTime(),
       startTime24: startTime,
@@ -167,6 +223,7 @@ const RequestService = () => {
             address: clientAddress,
             services: serviceNames.join(", "),
             servicesArray: serviceNames,
+            perServiceHoursByName,
             date: format(selectedDate, "PPP"),
             time: `${format12h(startTime)} to ${format12h(endTime)}`,
             startTime24: startTime,
@@ -245,6 +302,7 @@ const RequestService = () => {
                 {services.map((service) => {
                   const Icon = service.icon;
                   const isSelected = selectedServices.includes(service.id);
+                  const hoursVal = serviceHoursById[service.id] ?? 1;
                   return (
                     <button
                       key={service.id}
@@ -273,6 +331,26 @@ const RequestService = () => {
                             )}
                           </div>
                           <p className="text-sm text-muted-foreground">{service.description}</p>
+                          {isSelected && (
+                            <div className="mt-3 flex items-center gap-2">
+                              <Label className="text-xs text-muted-foreground">Hours</Label>
+                              <Input
+                                type="number"
+                                min={0.5}
+                                step={0.5}
+                                className="h-8 w-24"
+                                value={hoursVal}
+                                onClick={(e) => e.stopPropagation()}
+                                onMouseDown={(e) => e.stopPropagation()}
+                                onPointerDown={(e) => e.stopPropagation()}
+                                onKeyDown={(e) => e.stopPropagation()}
+                                onChange={(e) => {
+                                  const raw = parseFloat(e.target.value);
+                                  setServiceHoursById((prev) => ({ ...prev, [service.id]: Number.isFinite(raw) ? raw : 0 }));
+                                }}
+                              />
+                            </div>
+                          )}
                         </div>
                       </div>
                     </button>
@@ -326,8 +404,15 @@ const RequestService = () => {
                 <TimeRangePicker
                   start={startTime}
                   end={endTime}
-                  onChange={({ start, end }) => { setStartTime(start); setEndTime(end); }}
+                  endDisabled
+                  onChange={({ start }) => {
+                    setStartTime(start);
+                    // end time will be recalculated automatically from selected service hours
+                  }}
                 />
+                <p className="mt-2 text-xs text-muted-foreground">
+                  End time is automatically calculated from the total selected service hours.
+                </p>
               </CardContent>
             </Card>
 
@@ -342,11 +427,22 @@ const RequestService = () => {
               <CardContent className="space-y-3">
                 <div>
                   <Label className="text-xs text-muted-foreground">Services</Label>
-                  <p className="font-medium">
-                    {selectedServices.length > 0
-                      ? selectedServices.map(id => services.find(s => s.id === id)?.name).join(", ")
-                      : "No services selected"}
-                  </p>
+                    {selectedServices.length > 0 ? (
+                      <div className="text-sm space-y-1">
+                        {selectedServices.map((id) => {
+                          const s = services.find(x => x.id === id);
+                          const h = serviceHoursById[id] ?? 1;
+                          return (
+                            <div key={id} className="flex items-center justify-between">
+                              <span className="font-medium">{s?.name}</span>
+                              <span className="text-muted-foreground">{h} hr</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <p className="font-medium">No services selected</p>
+                    )}
                 </div>
                 <div>
                   <Label className="text-xs text-muted-foreground">Date & Time</Label>

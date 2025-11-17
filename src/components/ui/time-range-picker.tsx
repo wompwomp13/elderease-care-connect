@@ -8,9 +8,11 @@ type TimeRangePickerProps = {
   end?: string | null;
   onChange?: (next: { start: string | null; end: string | null }) => void;
   disabled?: boolean;
+  startDisabled?: boolean;
+  endDisabled?: boolean;
 };
 
-export const TimeRangePicker = ({ start, end, onChange, disabled }: TimeRangePickerProps) => {
+export const TimeRangePicker = ({ start, end, onChange, disabled, startDisabled, endDisabled }: TimeRangePickerProps) => {
   const isValid = isEndAfterStart(start ?? null, end ?? null);
 
   const handleStartChange = (val: string) => {
@@ -26,7 +28,7 @@ export const TimeRangePicker = ({ start, end, onChange, disabled }: TimeRangePic
         <TimePicker
           value={start ?? undefined}
           onChange={handleStartChange}
-          disabled={disabled}
+          disabled={Boolean(disabled || startDisabled)}
           placeholder="Start time"
           aria-label="Select start time"
         />
@@ -34,7 +36,7 @@ export const TimeRangePicker = ({ start, end, onChange, disabled }: TimeRangePic
         <TimePicker
           value={end ?? undefined}
           onChange={handleEndChange}
-          disabled={disabled}
+          disabled={Boolean(disabled || endDisabled)}
           placeholder="End time"
           aria-label="Select end time"
         />

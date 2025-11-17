@@ -6,7 +6,7 @@ import { Calendar as DateCalendar } from "@/components/ui/calendar";
 import { useEffect, useState } from "react";
 import { Calendar, MapPin, Phone, User, Clock, HeartHandshake, ShoppingBasket, CheckCircle2 } from "lucide-react";
 import { db } from "@/lib/firebase";
-import { collection, onSnapshot, orderBy, query, where, updateDoc, doc, addDoc, serverTimestamp } from "firebase/firestore";
+import { collection, onSnapshot, orderBy, query, where, updateDoc, doc, addDoc, serverTimestamp, getDoc } from "firebase/firestore";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Button as UIButton } from "@/components/ui/button";
 import { useToast } from "@/components/ui/use-toast";
@@ -50,6 +50,7 @@ const MyAssignments = () => {
   const [ratingFeedback, setRatingFeedback] = useState<string>("");
   const [currentEmail, setCurrentEmail] = useState<string | null>(user?.email ?? null);
   const [detailsTarget, setDetailsTarget] = useState<any | null>(null);
+  const [requestNotes, setRequestNotes] = useState<string | null>(null);
   const [updatingById, setUpdatingById] = useState<Record<string, boolean>>({});
   const [justCompletedById, setJustCompletedById] = useState<Record<string, boolean>>({});
   const { toast } = useToast();
@@ -99,6 +100,23 @@ const MyAssignments = () => {
       setUpdatingById((s) => ({ ...s, [assignment.id]: false }));
     }
   };
+
+  // When opening details, if assignment lacks notes, fetch notes from the related service request
+  useEffect(() => {
+    setRequestNotes(null);
+    const rid = detailsTarget?.requestId;
+    const hasNotes = Boolean(detailsTarget?.notes);
+    if (!rid || hasNotes) return;
+    (async () => {
+      try {
+        const snap = await getDoc(doc(db, "serviceRequests", rid));
+        if (snap.exists()) {
+          const data = snap.data() as any;
+          setRequestNotes(data?.notes ?? null);
+        }
+      } catch {}
+    })();
+  }, [detailsTarget]);
 
   const requestRating = (assignment: any) => {
     setRatingTarget(assignment);
@@ -258,7 +276,7 @@ const MyAssignments = () => {
             </div>
             <div>
               <p className="text-muted-foreground mb-1">Notes</p>
-              <p className="font-medium whitespace-pre-wrap">{detailsTarget?.notes || "No additional notes provided."}</p>
+              <p className="font-medium whitespace-pre-wrap">{detailsTarget?.notes ?? requestNotes ?? "No additional notes provided."}</p>
             </div>
           </div>
         </DialogContent>

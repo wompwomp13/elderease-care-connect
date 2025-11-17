@@ -8,6 +8,8 @@ import logo from "@/assets/logo.png";
 import { CheckCircle, Calendar, Clock, DollarSign, User, MapPin, Home } from "lucide-react";
 import { minutesSinceMidnight } from "@/lib/time";
 
+type PerServiceHours = Record<string, number>;
+
 const ElderNavbar = () => {
   const user = getCurrentUser();
   return (
@@ -71,20 +73,28 @@ const PaymentConfirmation = () => {
   }, [startEnd]);
 
   const servicesSelected = useMemo(() => parseServicesArray(requestData), [requestData]);
+  const perServiceHoursByName: PerServiceHours = useMemo(() => {
+    const map = requestData.perServiceHoursByName as PerServiceHours | undefined;
+    if (map && typeof map === "object") return map;
+    return {};
+  }, [requestData]);
 
   const pricing = useMemo(() => {
-    const hours = duration.hours;
-    if (hours <= 0 || servicesSelected.length === 0) return { lineItems: [], subtotal: 0, commission: 0, total: 0 };
+    if (servicesSelected.length === 0) return { lineItems: [], subtotal: 0, commission: 0, total: 0 };
+    const hasPerService = Object.keys(perServiceHoursByName).length > 0;
+    const fallbackHours = duration.hours;
+    // If per-service hours provided, use them; else fallback to scheduled duration
     const lineItems = servicesSelected.map((name: string) => {
       const rate = serviceRates[name] ?? 0;
-      const amount = rate * hours;
+      const hours = hasPerService ? Math.max(0, Number(perServiceHoursByName[name] ?? 0)) : fallbackHours;
+      const amount = rate * (Number.isFinite(hours) ? hours : 0);
       return { name, rate, hours, amount };
-    });
+    }).filter((li) => li.hours > 0 && li.rate >= 0);
     const subtotal = lineItems.reduce((sum, li) => sum + li.amount, 0);
     const commission = subtotal * 0.05;
     const total = subtotal + commission;
     return { lineItems, subtotal, commission, total };
-  }, [servicesSelected, duration.hours]);
+  }, [servicesSelected, duration.hours, perServiceHoursByName]);
 
   const formatPHP = (value: number) => new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP", currencyDisplay: "narrowSymbol", minimumFractionDigits: 2 }).format(value);
 
