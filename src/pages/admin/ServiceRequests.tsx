@@ -11,12 +11,34 @@ import { db } from "@/lib/firebase";
 import { addDoc, collection, doc, getDocs, limit, onSnapshot, orderBy, query, serverTimestamp, updateDoc, where } from "firebase/firestore";
 import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "@/components/ui/pagination";
 
+// Base hourly rates (PHP) per service
+const SERVICE_RATES: Record<string, number> = {
+  "Companionship": 150,
+  "Light Housekeeping": 170,
+  "Running Errands": 200,
+  "Home Visits": 180,
+  "Socialization": 230,
+};
+
+type AdjustmentInfo = { tier: "Associate" | "Proficient" | "Advanced" | "Expert"; percent: number };
+const getDynamicAdjustment = (tasksCompleted: number, avgRating: number | null | undefined): AdjustmentInfo => {
+  const r = typeof avgRating === "number" ? avgRating : 0;
+  if (tasksCompleted >= 40 && r >= 4.6) return { tier: "Expert", percent: 0.12 };
+  if (tasksCompleted >= 20 && r >= 4.4) return { tier: "Advanced", percent: 0.08 };
+  if (tasksCompleted >= 5 && r >= 4.2) return { tier: "Proficient", percent: 0.05 };
+  return { tier: "Associate", percent: 0 };
+};
+
+const formatPHP = (v: number) => new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP", currencyDisplay: "narrowSymbol", minimumFractionDigits: 2 }).format(v);
+const genConfirmation = () => `#SR-${Math.random().toString(36).slice(2, 10).toUpperCase()}`;
+
 const ServiceRequests = () => {
   const { toast } = useToast();
   const [requests, setRequests] = useState<any[] | null>(null);
   const [volunteers, setVolunteers] = useState<any[] | null>(null);
   const [ratingsMap, setRatingsMap] = useState<Record<string, { avg: number; count: number }>>({});
   const [tasksMap, setTasksMap] = useState<Record<string, number>>({});
+  const [assignmentByRequest, setAssignmentByRequest] = useState<Record<string, any>>({});
   const [page, setPage] = useState<number>(1);
   const perPage = 5;
 
@@ -61,10 +83,11 @@ const ServiceRequests = () => {
     return () => unsub();
   }, []);
 
-  // Live tasks completed aggregation (by volunteer email)
+  // Live tasks completed aggregation (by volunteer email) and map assignments by request for pricing display
   useEffect(() => {
     const unsub = onSnapshot(collection(db, "assignments"), (snap) => {
       const counts: Record<string, number> = {};
+      const byRequest: Record<string, any> = {};
       snap.docs.forEach((d) => {
         const a = d.data() as any;
         const email = (a.volunteerEmail || "").toLowerCase();
@@ -74,8 +97,19 @@ const ServiceRequests = () => {
         if (isCompleted && confirmed) {
           counts[email] = (counts[email] || 0) + 1;
         }
+        // Keep the latest assignment per request for display (usually one)
+        const rid = a.requestId;
+        if (rid) {
+          const cur = byRequest[rid];
+          const curTs = cur?.createdAt?.toMillis?.() ?? (typeof cur?.createdAt === "number" ? cur.createdAt : 0);
+          const nextTs = a.createdAt?.toMillis?.() ?? (typeof a.createdAt === "number" ? a.createdAt : 0);
+          if (!cur || nextTs >= curTs) {
+            byRequest[rid] = { id: d.id, ...a };
+          }
+        }
       });
       setTasksMap(counts);
+      setAssignmentByRequest(byRequest);
     });
     return () => unsub();
   }, []);
@@ -150,6 +184,26 @@ const ServiceRequests = () => {
             if (!uSnap.empty) volunteerUid = uSnap.docs[0].id;
           }
         } catch {}
+        // Compute dynamic pricing at assignment time
+        const emailKey = (volunteer.email || "").toLowerCase();
+        const ratingAgg = ratingsMap[emailKey];
+        const tasksDone = tasksMap[emailKey] ?? 0;
+        const { tier, percent } = getDynamicAdjustment(tasksDone, ratingAgg?.avg);
+
+        const perServiceHoursByName: Record<string, number> = (req.perServiceHoursByName && typeof req.perServiceHoursByName === "object") ? req.perServiceHoursByName : {};
+        const selectedServices: string[] = Array.isArray(req.services) ? req.services : (req.service ? [req.service] : []);
+        const lineItems = selectedServices.map((name: string) => {
+          const baseRate = SERVICE_RATES[name] ?? 0;
+          const hours = Math.max(0, Number(perServiceHoursByName?.[name] ?? 0));
+          const adjustedRate = baseRate * (1 + percent);
+          const amount = adjustedRate * hours;
+          return { name, baseRate, hours, adjustedRate, amount };
+        }).filter((li) => li.hours > 0);
+        const subtotal = lineItems.reduce((s, li) => s + li.amount, 0);
+        const commission = subtotal * 0.05;
+        const total = subtotal + commission;
+        const confirmationNumber = genConfirmation();
+
         await addDoc(collection(db, "assignments"), {
           requestId,
           volunteerDocId: volunteer.id,
@@ -160,18 +214,28 @@ const ServiceRequests = () => {
           elderName: req.elderName,
           address: req.address,
           services: req.services || (req.service ? [req.service] : []),
+          perServiceHoursByName: perServiceHoursByName || null,
           serviceDateTS: req.serviceDateTS || null,
           startTime24: req.startTime24 || null,
           endTime24: req.endTime24 || null,
           startTimeText: req.startTimeText || null,
           endTimeText: req.endTimeText || null,
           notes: req.notes || null,
+          receipt: {
+            confirmationNumber,
+            lineItems,
+            subtotal,
+            commission,
+            total,
+            dynamicPricing: { tier, percent },
+          },
+          receiptIssuedAt: serverTimestamp(),
           status: "assigned",
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         });
       }
-      toast({ title: "Volunteer Assigned", description: `${volunteer.fullName} has been assigned to this request.` });
+      toast({ title: "Volunteer Assigned", description: `${volunteer.fullName} has been assigned. Receipt sent to elder notifications.` });
     } catch (e: any) {
       toast({ title: "Failed to assign", description: e?.message ?? "Please try again.", variant: "destructive" });
     }
@@ -262,6 +326,59 @@ const ServiceRequests = () => {
                       <p className="text-sm font-medium mb-1">Additional Notes</p>
                       <p className="text-sm text-muted-foreground">{request.notes || "—"}</p>
                     </div>
+                    {request.status === "assigned" && assignmentByRequest[request.id]?.receipt && (
+                      <div className="rounded-lg border p-3 bg-muted/30">
+                        <p className="text-sm font-medium mb-1">Dynamic Pricing</p>
+                        <div className="text-xs text-muted-foreground">
+                          <div className="flex items-center justify-between">
+                            <span>Tier</span>
+                            <span className="font-medium">
+                              {assignmentByRequest[request.id].receipt.dynamicPricing?.tier} (
+                                {Math.round((assignmentByRequest[request.id].receipt.dynamicPricing?.percent ?? 0) * 100)}%
+                              )
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span>Total</span>
+                            <span className="font-semibold text-foreground">
+                              {formatPHP(assignmentByRequest[request.id].receipt.total ?? 0)}
+                            </span>
+                          </div>
+                        </div>
+                        <Dialog>
+                          <DialogTrigger asChild>
+                            <button className="mt-2 text-xs text-primary hover:underline">View pricing details</button>
+                          </DialogTrigger>
+                          <DialogContent className="max-w-md">
+                            <DialogHeader>
+                              <DialogTitle>Pricing Details</DialogTitle>
+                            </DialogHeader>
+                            <div className="space-y-2 text-sm">
+                              {(assignmentByRequest[request.id].receipt.lineItems || []).map((li: any) => (
+                                <div key={li.name} className="flex items-center justify-between">
+                                  <span className="text-muted-foreground">
+                                    {li.name} ({formatPHP(li.adjustedRate ?? li.baseRate)}/hr × {(li.hours ?? 0).toFixed(2)} hr)
+                                  </span>
+                                  <span className="font-medium">{formatPHP(li.amount ?? 0)}</span>
+                                </div>
+                              ))}
+                              <div className="flex items-center justify-between pt-2 border-t">
+                                <span className="text-muted-foreground">Subtotal</span>
+                                <span className="font-medium">{formatPHP(assignmentByRequest[request.id].receipt.subtotal ?? 0)}</span>
+                              </div>
+                              <div className="flex items-center justify-between">
+                                <span className="text-muted-foreground">Commission (5%)</span>
+                                <span className="font-medium">{formatPHP(assignmentByRequest[request.id].receipt.commission ?? 0)}</span>
+                              </div>
+                              <div className="flex items-center justify-between text-base pt-1">
+                                <span className="font-semibold">Total</span>
+                                <span className="font-bold text-primary">{formatPHP(assignmentByRequest[request.id].receipt.total ?? 0)}</span>
+                              </div>
+                            </div>
+                          </DialogContent>
+                        </Dialog>
+                      </div>
+                    )}
                   </div>
                 </div>
                 

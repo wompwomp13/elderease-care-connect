@@ -214,35 +214,35 @@ const Dashboard = () => {
           <div className="grid sm:grid-cols-2 gap-4">
             <div className="rounded-xl border p-4 bg-muted/40">
               <div className="flex items-center justify-between mb-1">
-                <span className="font-medium">Newbie</span>
+                <span className="font-medium">Associate</span>
                 <span className="text-xs px-2 py-0.5 rounded-full bg-muted text-foreground">Base rate</span>
               </div>
               <p className="text-xs text-muted-foreground">0–4 services • any rating</p>
-              <p className="text-sm mt-1">Just starting out — builds initial experience.</p>
+              <p className="text-sm mt-1">Early-stage contributor building experience.</p>
             </div>
             <div className="rounded-xl border p-4 bg-emerald-50/60 dark:bg-emerald-500/5">
               <div className="flex items-center justify-between mb-1">
-                <span className="font-medium">Reliable</span>
+                <span className="font-medium">Proficient</span>
                 <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-700 dark:text-emerald-400">+5%</span>
               </div>
               <p className="text-xs text-muted-foreground">5–19 services • avg rating ≥ 4.2</p>
-              <p className="text-sm mt-1">Consistently reliable with positive feedback.</p>
+              <p className="text-sm mt-1">Consistent performance with strong feedback.</p>
             </div>
             <div className="rounded-xl border p-4 bg-blue-50/60 dark:bg-blue-500/5">
               <div className="flex items-center justify-between mb-1">
-                <span className="font-medium">Experienced</span>
+                <span className="font-medium">Advanced</span>
                 <span className="text-xs px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-700 dark:text-blue-400">+8%</span>
               </div>
               <p className="text-xs text-muted-foreground">20–39 services • avg rating ≥ 4.4</p>
-              <p className="text-sm mt-1">Handles requests well, proven track record.</p>
+              <p className="text-sm mt-1">Proven track record handling requests well.</p>
             </div>
             <div className="rounded-xl border p-4 bg-amber-50/60 dark:bg-amber-500/5">
               <div className="flex items-center justify-between mb-1">
-                <span className="font-medium">Top Performer</span>
+                <span className="font-medium">Expert</span>
                 <span className="text-xs px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-700 dark:text-amber-400">+12%</span>
               </div>
               <p className="text-xs text-muted-foreground">40+ services • avg rating ≥ 4.6</p>
-              <p className="text-sm mt-1">Excellent history and high ratings.</p>
+              <p className="text-sm mt-1">Excellent service history and high ratings.</p>
             </div>
           </div>
           <p className="text-xs text-muted-foreground mt-3">These adjustments apply to the base hourly rate.</p>

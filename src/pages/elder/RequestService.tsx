@@ -105,6 +105,7 @@ const RequestService = () => {
   const [clientAge, setClientAge] = useState("");
   const [clientAddress, setClientAddress] = useState("");
   const [serviceHoursById, setServiceHoursById] = useState<Record<string, number>>({});
+  const [showSubmittedDialog, setShowSubmittedDialog] = useState(false);
 
   const getTotalSelectedHours = (): number => {
     return selectedServices.reduce((sum, id) => sum + (Number(serviceHoursById[id]) || 0), 0);
@@ -215,26 +216,13 @@ const RequestService = () => {
     };
 
     addDoc(collection(db, "serviceRequests"), payload)
-      .then((docRef) => {
-        navigate("/elder/payment-confirmation", {
-          state: {
-            name: clientName,
-            age: clientAge,
-            address: clientAddress,
-            services: serviceNames.join(", "),
-            servicesArray: serviceNames,
-            perServiceHoursByName,
-            date: format(selectedDate, "PPP"),
-            time: `${format12h(startTime)} to ${format12h(endTime)}`,
-            startTime24: startTime,
-            endTime24: endTime,
-            requestId: docRef.id,
-          }
-        });
+      .then(() => {
+        // Open center confirmation dialog; elder will click OK to continue
+        setShowSubmittedDialog(true);
       })
       .catch((err) => {
         toast({ title: "Failed to submit request", description: err?.message ?? "Please try again.", variant: "destructive" });
-      });
+    });
   };
 
   return (
@@ -465,6 +453,25 @@ const RequestService = () => {
         </div>
       </div>
       <ElderChatbot />
+      {showSubmittedDialog && (
+        <div role="dialog" aria-modal="true" className="fixed inset-0 z-[100] flex items-center justify-center">
+          <div className="absolute inset-0 bg-background/60 backdrop-blur-sm" />
+          <div className="relative z-[101] w-full max-w-md rounded-2xl border bg-card p-6 shadow-2xl">
+            <div className="text-center space-y-2 mb-4">
+              <div className="mx-auto w-14 h-14 rounded-full bg-green-500/10 grid place-items-center">
+                <span className="text-green-600 text-xl">✓</span>
+              </div>
+              <h2 className="text-xl font-bold">Request Submitted</h2>
+              <p className="text-sm text-muted-foreground">
+                We’ve received your request. You’ll get a receipt once a volunteer is assigned.
+              </p>
+            </div>
+            <div className="flex justify-center">
+              <Button size="lg" onClick={() => navigate("/elder/notifications")}>OK</Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

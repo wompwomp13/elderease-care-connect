@@ -6,6 +6,7 @@ import { Bell, Calendar, HeartHandshake, ShoppingBasket, Home, Users, MessageSqu
 import { useEffect, useState } from "react";
 import { db } from "@/lib/firebase";
 import { collection, onSnapshot, orderBy, query, where } from "firebase/firestore";
+import { Separator } from "@/components/ui/separator";
 import ElderChatbot from "@/components/elder/ElderChatbot";
 
 const ElderNavbar = () => {
@@ -38,7 +39,7 @@ const ElderNavbar = () => {
   );
 };
 
-type NotificationItem = { id: string; icon: any; title: string; text: string; badge: string; tone: string };
+type NotificationItem = { id: string; icon: any; title: string; text: string; badge: string; tone: string; receipt?: any };
 
 const toneClasses: Record<string, string> = {
   info: "border-blue-500/20 bg-blue-500/5",
@@ -50,6 +51,9 @@ const Notifications = () => {
   const user = getCurrentUser();
   const [uid, setUid] = useState<string | null>(user?.id ?? null);
   const [items, setItems] = useState<NotificationItem[] | null>(null);
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const toggleExpand = (id: string) => setExpanded((prev) => ({ ...prev, [id]: !prev[id] }));
+  const formatPHP = (value: number) => new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP", currencyDisplay: "narrowSymbol", minimumFractionDigits: 2 }).format(value);
 
   useEffect(() => {
     const unsub = subscribeToAuth((p: AuthProfile | null) => setUid(p?.uid ?? null));
@@ -69,6 +73,7 @@ const Notifications = () => {
           text: `${a.startTimeText} - ${a.endTimeText} on ${a.serviceDateTS ? new Date(a.serviceDateTS).toLocaleDateString() : ""}`,
           badge: "Confirmed",
           tone: "info",
+          receipt: a.receipt || null,
         };
       });
       setItems(arr);
@@ -104,6 +109,57 @@ const Notifications = () => {
                     <span className="text-[10px] px-2 py-0.5 rounded-full bg-primary/10 text-primary">{n.badge}</span>
                   </div>
                   <p className="text-sm text-muted-foreground">{n.text}</p>
+                  {n.receipt && (
+                    <div className="mt-3">
+                      <button className="text-xs text-primary hover:underline" onClick={() => toggleExpand(n.id)}>
+                        {expanded[n.id] ? "Hide Receipt" : "View Receipt"}
+                      </button>
+                      {expanded[n.id] && (
+                        <div className="mt-3 rounded-lg border bg-background">
+                          <div className="p-3 border-b">
+                            <p className="text-xs text-muted-foreground">Confirmation Number</p>
+                            <p className="font-medium">{n.receipt.confirmationNumber || `#SR-${n.id.slice(0, 8).toUpperCase()}`}</p>
+                          </div>
+                          <div className="p-3 space-y-2 text-sm">
+                            <p className="font-medium">Payment Information</p>
+                            {Array.isArray(n.receipt.lineItems) && n.receipt.lineItems.length > 0 ? (
+                              <div className="space-y-1">
+                                {n.receipt.lineItems.map((li: any) => (
+                                  <div key={li.name} className="flex justify-between">
+                                    <span className="text-muted-foreground">
+                                      {li.name} ({formatPHP(li.adjustedRate ?? li.baseRate)}/hr × {(li.hours ?? 0).toFixed(2)} hr)
+                                    </span>
+                                    <span className="font-medium">{formatPHP(li.amount ?? 0)}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="text-muted-foreground">No line items.</div>
+                            )}
+                            <Separator />
+                            <div className="flex justify-between">
+                              <span className="text-muted-foreground">Subtotal</span>
+                              <span className="font-medium">{formatPHP(n.receipt.subtotal ?? 0)}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-muted-foreground">Commission (5%)</span>
+                              <span className="font-medium">{formatPHP(n.receipt.commission ?? 0)}</span>
+                            </div>
+                            <Separator />
+                            <div className="flex justify-between text-base">
+                              <span className="font-semibold">Total Amount</span>
+                              <span className="font-bold text-primary">{formatPHP(n.receipt.total ?? 0)}</span>
+                            </div>
+                            {n.receipt.dynamicPricing && (
+                              <p className="text-xs text-muted-foreground mt-2">
+                                Includes dynamic pricing: {n.receipt.dynamicPricing.tier} ({Math.round((n.receipt.dynamicPricing.percent ?? 0) * 100)}%)
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
                 <button className="text-xs text-primary hover:underline" aria-label="Mark as read">Mark as read</button>
               </div>
