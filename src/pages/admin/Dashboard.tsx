@@ -15,6 +15,8 @@ const Dashboard = () => {
   const [approvedVolunteers, setApprovedVolunteers] = useState<any[] | null>(null);
   const [assignments, setAssignments] = useState<any[] | null>(null);
   const [ratingsMap, setRatingsMap] = useState<Record<string, { sum: number; count: number }>>({});
+  const [avgElderMs, setAvgElderMs] = useState<number | null>(null);
+  const [avgVolunteerMs, setAvgVolunteerMs] = useState<number | null>(null);
 
   // Subscribe to Firestore
   useEffect(() => {
@@ -55,6 +57,31 @@ const Dashboard = () => {
     });
     return () => unsub();
   }, []);
+
+  // Form metrics averages
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, "formMetrics"), (snap) => {
+      let elderSum = 0, elderCount = 0;
+      let volunteerSum = 0, volunteerCount = 0;
+      snap.docs.forEach((d) => {
+        const m = d.data() as any;
+        const dur = Number(m.durationMs) || 0;
+        if (m.type === "elder_request_service") { elderSum += dur; elderCount += 1; }
+        if (m.type === "volunteer_application") { volunteerSum += dur; volunteerCount += 1; }
+      });
+      setAvgElderMs(elderCount ? elderSum / elderCount : null);
+      setAvgVolunteerMs(volunteerCount ? volunteerSum / volunteerCount : null);
+    });
+    return () => unsub();
+  }, []);
+
+  const formatDuration = (ms: number | null) => {
+    if (ms == null) return "—";
+    const totalSec = Math.round(ms / 1000);
+    const mins = Math.floor(totalSec / 60);
+    const secs = totalSec % 60;
+    return `${mins}m ${secs.toString().padStart(2, "0")}s`;
+  };
 
   // Derived metrics
   const totalRequests = requests?.length ?? 0;
@@ -276,6 +303,26 @@ const Dashboard = () => {
             </Card>
           ))}
         </div>
+
+        {/* Form Completion Time */}
+        <Card className="shadow-lg border-0">
+          <CardHeader>
+            <CardTitle className="text-lg">Form Completion Time</CardTitle>
+            <p className="text-sm text-muted-foreground">Average time to complete forms</p>
+          </CardHeader>
+          <CardContent>
+            <div className="grid sm:grid-cols-2 gap-4">
+              <div className="rounded-xl border p-4 bg-muted/40">
+                <div className="text-xs text-muted-foreground mb-1">Guardians / Elders</div>
+                <div className="text-2xl font-bold">{formatDuration(avgElderMs)}</div>
+              </div>
+              <div className="rounded-xl border p-4 bg-muted/40">
+                <div className="text-xs text-muted-foreground mb-1">Volunteers</div>
+                <div className="text-2xl font-bold">{formatDuration(avgVolunteerMs)}</div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Weekly Activity Chart */}

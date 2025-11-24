@@ -5,27 +5,42 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Heart, Mail, Phone, MapPin, Clock, Users, Home, ShoppingBasket, HeartHandshake, Upload, Check } from "lucide-react";
 import { motion } from "framer-motion";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { db } from "@/lib/firebase";
 import { addDoc, collection, serverTimestamp } from "firebase/firestore";
 import { toast } from "@/hooks/use-toast";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 const SERVICES = [
   { id: "companionship", name: "Companionship", description: "Friendly support and conversation for daily comfort", icon: HeartHandshake },
   { id: "housekeeping", name: "Light Housekeeping", description: "Help maintaining a clean and comfortable home", icon: Home },
   { id: "errands", name: "Running Errands", description: "Assistance with shopping and daily tasks", icon: ShoppingBasket },
   { id: "visits", name: "Home Visits", description: "Regular check-ins and support at home", icon: Users },
-  { id: "socialization", name: "Socialization", description: "Activities and outings for social engagement", icon: Users },
 ];
 
+const normalizePHPhone = (input: string): string | null => {
+  const digits = input.replace(/\D+/g, "");
+  if (digits.startsWith("639") && digits.length === 12) return `+${digits}`;
+  if (digits.startsWith("09") && digits.length === 11) return `+63${digits.slice(1)}`;
+  if (digits.startsWith("9") && digits.length === 10) return `+63${digits}`;
+  if (digits.startsWith("63") && digits.length === 12) return `+${digits}`;
+  return null;
+};
+
 const VolunteerSection = () => {
-  const [fullName, setFullName] = useState("");
+  const formStartRef = useRef<number | null>(null);
+  const markFormStarted = () => { if (!formStartRef.current) formStartRef.current = Date.now(); };
+  const [firstName, setFirstName] = useState("");
+  const [middleName, setMiddleName] = useState("");
+  const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [address, setAddress] = useState("");
   const [message, setMessage] = useState("");
   const [selectedServices, setSelectedServices] = useState<string[]>([]);
   const [idPreviewName, setIdPreviewName] = useState<string | null>(null); // placeholder, not uploaded
+  const [gender, setGender] = useState<string>("");
+  const [phoneError, setPhoneError] = useState<string | null>(null);
 
   const toggleService = (id: string) => {
     setSelectedServices((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
@@ -33,24 +48,49 @@ const VolunteerSection = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!fullName.trim() || !email.trim() || !phone.trim() || !address.trim() || selectedServices.length === 0) {
+    if (!firstName.trim() || !lastName.trim() || !email.trim() || !phone.trim() || !address.trim() || !gender || selectedServices.length === 0) {
       toast({ title: "Please complete all required fields and select at least one service.", variant: "destructive" });
       return;
     }
+    const normalizedPhone = normalizePHPhone(phone);
+    if (!normalizedPhone) {
+      setPhoneError("Please use +63 9XXXXXXXXX");
+      toast({ title: "Invalid Philippine phone number", description: "Use +63 9XXXXXXXXX format.", variant: "destructive" });
+      return;
+    }
+    setPhoneError(null);
     try {
+      const fullName = [firstName.trim(), middleName.trim(), lastName.trim()].filter(Boolean).join(" ");
       await addDoc(collection(db, "pendingVolunteers"), {
         fullName: fullName.trim(),
+        firstName: firstName.trim(),
+        middleName: middleName.trim() || null,
+        lastName: lastName.trim(),
         email: email.trim().toLowerCase(),
-        phone: phone.trim(),
+        phone: normalizedPhone,
         address: address.trim(),
+        gender,
         services: selectedServices,
         message: message.trim(),
         idFileName: idPreviewName, // placeholder only; file is not uploaded yet
         status: "pending",
         createdAt: serverTimestamp(),
       });
+      // fire-and-forget: record form completion time
+      try {
+        const startedAtMs = formStartRef.current ?? Date.now();
+        const durationMs = Math.max(0, Date.now() - startedAtMs);
+        await addDoc(collection(db, "formMetrics"), {
+          type: "volunteer_application",
+          userRole: "volunteer",
+          email: email.trim().toLowerCase(),
+          durationMs,
+          startedAtMs,
+          submittedAt: serverTimestamp(),
+        });
+      } catch {}
       toast({ title: "Application submitted!", description: "Our admin team will review your details and contact you soon." });
-      setFullName(""); setEmail(""); setPhone(""); setAddress(""); setMessage(""); setSelectedServices([]); setIdPreviewName(null);
+      setFirstName(""); setMiddleName(""); setLastName(""); setEmail(""); setPhone(""); setAddress(""); setMessage(""); setSelectedServices([]); setIdPreviewName(null); setGender("");
     } catch (err: any) {
       toast({ title: "Submission failed", description: err?.message ?? "Please try again later.", variant: "destructive" });
     }
@@ -145,20 +185,63 @@ const VolunteerSection = () => {
           >
             <Card className="shadow-2xl h-full">
             <CardContent className="p-8">
-              <form onSubmit={handleSubmit} className="space-y-5">
+              <form onSubmit={handleSubmit} className="space-y-5" onFocusCapture={markFormStarted}>
+                <div className="grid sm:grid-cols-2 gap-3">
+                  <div>
+                    <Label htmlFor="firstName" className="text-sm font-semibold text-foreground">
+                      First Name *
+                    </Label>
+                    <Input
+                      id="firstName"
+                      type="text"
+                      placeholder="Juan"
+                      required
+                      value={firstName}
+                      onChange={(e) => setFirstName(e.target.value)}
+                      className="mt-1.5"
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="lastName" className="text-sm font-semibold text-foreground">
+                      Last Name *
+                    </Label>
+                    <Input
+                      id="lastName"
+                      type="text"
+                      placeholder="Dela Cruz"
+                      required
+                      value={lastName}
+                      onChange={(e) => setLastName(e.target.value)}
+                      className="mt-1.5"
+                    />
+                  </div>
+                </div>
                 <div>
-                  <Label htmlFor="name" className="text-sm font-semibold text-foreground">
-                    Full Name *
+                  <Label htmlFor="middleName" className="text-sm font-semibold text-foreground">
+                    Middle Name
                   </Label>
                   <Input
-                    id="name"
+                    id="middleName"
                     type="text"
-                    placeholder="John Doe"
-                    required
-                    value={fullName}
-                    onChange={(e) => setFullName(e.target.value)}
+                    placeholder="Optional"
+                    value={middleName}
+                    onChange={(e) => setMiddleName(e.target.value)}
                     className="mt-1.5"
                   />
+                </div>
+                <div>
+                  <Label className="text-sm font-semibold text-foreground">Gender *</Label>
+                  <Select value={gender} onValueChange={(v) => setGender(v)}>
+                    <SelectTrigger className="mt-1.5">
+                      <SelectValue placeholder="Select gender" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="female">Female</SelectItem>
+                      <SelectItem value="male">Male</SelectItem>
+                      <SelectItem value="other">Other</SelectItem>
+                      <SelectItem value="prefer_not_to_say">Prefer not to say</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
 
                 <div>
@@ -178,17 +261,19 @@ const VolunteerSection = () => {
 
                 <div>
                   <Label htmlFor="phone" className="text-sm font-semibold text-foreground">
-                    Phone Number *
+                    Phone Number (PH) *
                   </Label>
                   <Input
                     id="phone"
                     type="tel"
-                    placeholder="(555) 123-4567"
+                    placeholder="+63 9XXXXXXXXX"
                     required
                     value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
-                    className="mt-1.5"
+                    onChange={(e) => { setPhone(e.target.value); if (phoneError) setPhoneError(null); }}
+                    aria-invalid={!!phoneError}
+                    className={`mt-1.5 ${phoneError ? "border-destructive focus-visible:ring-destructive" : ""}`}
                   />
+                  {phoneError && <p className="text-xs text-destructive mt-1">{phoneError}</p>}
                 </div>
 
                 <div>

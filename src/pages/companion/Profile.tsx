@@ -4,6 +4,7 @@ import { getCurrentUser, logout, subscribeToAuth, type AuthProfile } from "@/lib
 import logo from "@/assets/logo.png";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useEffect, useState } from "react";
+import { type AuthProfile as AP } from "@/lib/auth";
 
 const CompanionNavbar = () => {
   const user = getCurrentUser();
@@ -36,6 +37,18 @@ const CompanionNavbar = () => {
 
 const Profile = () => {
   const [auth, setAuth] = useState<AuthProfile | null>(null);
+
+  const formatPH = (phone?: string | null): string => {
+    if (!phone) return "—";
+    const raw = phone.trim();
+    if (raw.startsWith("+63")) return raw;
+    const digits = raw.replace(/\D+/g, "");
+    if (digits.startsWith("639") && digits.length === 12) return `+${digits}`;
+    if (digits.startsWith("09") && digits.length === 11) return `+63${digits.slice(1)}`;
+    if (digits.startsWith("9") && digits.length === 10) return `+63${digits}`;
+    return raw;
+  };
+
   useEffect(() => {
     const unsub = subscribeToAuth(setAuth);
     return () => unsub();
@@ -53,6 +66,7 @@ const Profile = () => {
           <CardContent className="space-y-3 text-sm">
             <div className="flex justify-between"><span className="text-muted-foreground">Name</span><span className="font-medium">{auth?.displayName || "—"}</span></div>
             <div className="flex justify-between"><span className="text-muted-foreground">Email</span><span className="font-medium">{auth?.email || "—"}</span></div>
+            <div className="flex justify-between"><span className="text-muted-foreground">Phone</span><span className="font-medium">{formatPH(auth?.phone)}</span></div>
             <div className="flex justify-between"><span className="text-muted-foreground">Role</span><span className="font-medium">{auth?.role || "—"}</span></div>
             <div className="flex justify-between"><span className="text-muted-foreground">UID</span><span className="font-medium">{auth?.uid || "—"}</span></div>
           </CardContent>

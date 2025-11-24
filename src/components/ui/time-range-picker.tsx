@@ -13,7 +13,8 @@ type TimeRangePickerProps = {
 };
 
 export const TimeRangePicker = ({ start, end, onChange, disabled, startDisabled, endDisabled }: TimeRangePickerProps) => {
-  const isValid = isEndAfterStart(start ?? null, end ?? null);
+  // When end is disabled (auto-calculated), suppress validation entirely
+  const isValid = endDisabled ? true : isEndAfterStart(start ?? null, end ?? null);
 
   const handleStartChange = (val: string) => {
     onChange?.({ start: val, end: end ?? null });
@@ -41,18 +42,20 @@ export const TimeRangePicker = ({ start, end, onChange, disabled, startDisabled,
           aria-label="Select end time"
         />
       </div>
-      <p
-        className={cn(
-          "flex items-center gap-2 text-xs",
-          isValid || !start || !end ? "text-muted-foreground" : "text-destructive",
-        )}
-        role={!isValid && start && end ? "alert" : undefined}
-        aria-live={!isValid && start && end ? "assertive" : "off"}
-      >
-        {!start || !end ? "Select both start and end times" : isValid ? "" : (
-          <span className="inline-flex items-center gap-1"><AlertCircle className="h-3.5 w-3.5" /> End time must be after start time</span>
-        )}
-      </p>
+      {!endDisabled ? (
+        <p
+          className={cn(
+            "flex items-center gap-2 text-xs",
+            isValid || !start || !end ? "text-muted-foreground" : "text-destructive",
+          )}
+          role={!isValid && start && end ? "alert" : undefined}
+          aria-live={!isValid && start && end ? "assertive" : "off"}
+        >
+          {!start || !end ? "Select both start and end times" : isValid ? "" : (
+            <span className="inline-flex items-center gap-1"><AlertCircle className="h-3.5 w-3.5" /> End time must be after start time</span>
+          )}
+        </p>
+      ) : null}
     </div>
   );
 };

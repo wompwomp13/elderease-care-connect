@@ -2,6 +2,8 @@ import { Link, useLocation } from "react-router-dom";
 import { getCurrentUser, logout, subscribeToAuth, type AuthProfile } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Input } from "@/components/ui/input";
 import logo from "@/assets/logo.png";
 import nurseImg from "@/assets/volunteer-nurse.png";
 import courierImg from "@/assets/volunteer-courier.jpg";
@@ -53,6 +55,8 @@ const MySchedule = () => {
   const [ratingValue, setRatingValue] = useState<number>(5);
   const [ratingFeedback, setRatingFeedback] = useState<string>("");
   const { toast } = useToast();
+  const [searchText, setSearchText] = useState<string>("");
+  const [appliedSearch, setAppliedSearch] = useState<string>("");
 
   useEffect(() => {
     const unsub = subscribeToAuth((p: AuthProfile | null) => setUid(p?.uid ?? null));
@@ -65,6 +69,39 @@ const MySchedule = () => {
     const unsub = onSnapshot(q, (snap) => setAssignments(snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }))));
     return () => unsub();
   }, [uid]);
+
+  const toHours = (start24?: string | null, end24?: string | null): number => {
+    if (!start24 || !end24) return 0;
+    const [sh, sm] = start24.split(":").map((x: string) => parseInt(x, 10));
+    const [eh, em] = end24.split(":").map((x: string) => parseInt(x, 10));
+    const startM = sh * 60 + sm;
+    const endM = eh * 60 + em;
+    const diff = endM - startM;
+    return diff > 0 ? +(diff / 60).toFixed(2) : 0;
+  };
+
+  const upcoming = useMemo(() => (assignments || []).filter(a => a.status !== "completed"), [assignments]);
+  const completed = useMemo(() => (assignments || []).filter(a => a.status === "completed" || a.guardianConfirmed), [assignments]);
+  const filteredCompleted = useMemo(() => {
+    const term = appliedSearch.trim().toLowerCase();
+    if (!term) return completed;
+    return completed.filter((a) => {
+      const services = Array.isArray(a.services) ? a.services.join(", ") : (a.services ?? "");
+      const volunteer = a.volunteerName ?? "";
+      const date = a.serviceDateTS ? new Date(a.serviceDateTS).toLocaleDateString() : "";
+      return [services, volunteer, date].some((v) => String(v).toLowerCase().includes(term));
+    });
+  }, [completed, appliedSearch]);
+
+  // Pagination for completed services
+  const pageSize = 5;
+  const [page, setPage] = useState(1);
+  const pageCount = Math.max(1, Math.ceil(filteredCompleted.length / pageSize));
+  const pagedCompleted = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return filteredCompleted.slice(start, start + pageSize);
+  }, [filteredCompleted, page]);
+  useEffect(() => { setPage(1); }, [appliedSearch]); // reset page on new search
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-background to-muted/20">
@@ -83,7 +120,7 @@ const MySchedule = () => {
           <div className="p-6 text-muted-foreground">No scheduled services yet.</div>
         ) : (
           <div className="grid lg:grid-cols-2 gap-6">
-            {assignments.map((a) => (
+            {upcoming.map((a) => (
               <Card key={a.id} className="overflow-hidden hover:shadow-md transition-all">
                 <div className="p-5 flex items-start gap-4">
                   <div className="h-14 w-14 rounded-full bg-primary/10 grid place-items-center flex-shrink-0">
@@ -114,6 +151,65 @@ const MySchedule = () => {
             ))}
           </div>
         )}
+
+        {/* Completed Services - Tabular with search */}
+        <div className="mt-10">
+          <h2 className="text-2xl font-bold mb-3">Completed Services</h2>
+          <div className="flex items-center gap-2 mb-4">
+            <Input
+              value={searchText}
+              onChange={(e) => setSearchText(e.target.value)}
+              placeholder="Search by service, volunteer, or date"
+              className="max-w-sm"
+            />
+            <Button variant="outline" onClick={() => setAppliedSearch(searchText)}>Search</Button>
+          </div>
+          <Card>
+            <CardContent className="p-0">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Date</TableHead>
+                    <TableHead>Time</TableHead>
+                    <TableHead>Services</TableHead>
+                    <TableHead>Volunteer</TableHead>
+                    <TableHead className="text-right">Duration (hrs)</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filteredCompleted.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={5} className="text-center text-muted-foreground">No completed services found.</TableCell>
+                    </TableRow>
+                  ) : (
+                    pagedCompleted.map((a) => (
+                      <TableRow key={a.id}>
+                        <TableCell>{a.serviceDateTS ? new Date(a.serviceDateTS).toLocaleDateString() : "—"}</TableCell>
+                        <TableCell>{a.startTimeText} - {a.endTimeText}</TableCell>
+                        <TableCell className="max-w-[260px] truncate">{Array.isArray(a.services) ? a.services.join(", ") : a.services}</TableCell>
+                        <TableCell>{a.volunteerName || "—"}</TableCell>
+                        <TableCell className="text-right">{toHours(a.startTime24, a.endTime24)}</TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+              <div className="flex items-center justify-between px-4 py-3 border-t">
+                <p className="text-xs text-muted-foreground">
+                  Page {page} of {pageCount}
+                </p>
+                <div className="flex items-center gap-2">
+                  <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>
+                    Previous
+                  </Button>
+                  <Button variant="outline" size="sm" disabled={page >= pageCount} onClick={() => setPage((p) => Math.min(pageCount, p + 1))}>
+                    Next
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
       </main>
       {/* Rating Dialog */}
       <Dialog open={!!rateTarget} onOpenChange={(open) => { if (!open) setRateTarget(null); }}>

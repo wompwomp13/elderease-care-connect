@@ -4,11 +4,31 @@ import { Button } from "@/components/ui/button";
 import { Phone, Mail } from "lucide-react";
 import { motion } from "framer-motion";
 import logo from "@/assets/logo.png";
+import { useState } from "react";
 
 const ContactSection = () => {
+  const [phone, setPhone] = useState("");
+  const [phoneError, setPhoneError] = useState<string | null>(null);
+
+  const normalizePHPhone = (input: string): string | null => {
+    const digits = input.replace(/\D+/g, "");
+    if (digits.startsWith("639") && digits.length === 12) return `+${digits}`;
+    if (digits.startsWith("09") && digits.length === 11) return `+63${digits.slice(1)}`;
+    if (digits.startsWith("9") && digits.length === 10) return `+63${digits}`;
+    if (digits.startsWith("63") && digits.length === 12) return `+${digits}`;
+    return null;
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    // For prototype, just show alert
+    const normalized = normalizePHPhone(phone);
+    if (!normalized) {
+      setPhoneError("Please use +63 9XXXXXXXXX");
+      alert("Please enter a valid Philippine phone number in +63 9XXXXXXXXX format.");
+      return;
+    }
+    setPhoneError(null);
+    // For prototype, just show alert with normalized phone
     alert("Thank you! Your appointment request has been received.");
   };
 
@@ -55,8 +75,16 @@ const ContactSection = () => {
                 <Input placeholder="e.g., Companionship" className="bg-background" required />
               </div>
               <div>
-                <label className="block text-sm font-semibold mb-2 text-foreground">Phone Number *</label>
-                <Input placeholder="(555) 123-4567" className="bg-background" required />
+                <label className="block text-sm font-semibold mb-2 text-foreground">Phone Number (PH) *</label>
+                <Input
+                  placeholder="+63 9XXXXXXXXX"
+                  className={`bg-background ${phoneError ? "border-destructive focus-visible:ring-destructive" : ""}`}
+                  required
+                  value={phone}
+                  onChange={(e) => { setPhone(e.target.value); if (phoneError) setPhoneError(null); }}
+                  aria-invalid={!!phoneError}
+                />
+                {phoneError && <p className="text-xs text-destructive mt-1">{phoneError}</p>}
               </div>
               <div>
                 <label className="block text-sm font-semibold mb-2 text-foreground">Select Time *</label>

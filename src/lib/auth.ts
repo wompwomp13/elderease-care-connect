@@ -111,6 +111,34 @@ export const loginWithEmail = async (email: string, password: string): Promise<A
   // Admin can only login with pre-made credentials
   const cred = await signInWithEmailAndPassword(auth, email, password);
   const profile = await getUserProfile(cred.user);
+  const normalizedEmail = (email || "").trim().toLowerCase();
+  // Block terminated volunteer accounts
+  try {
+    // Check users.status == 'terminated'
+    const userDoc = await getDoc(doc(db, "users", cred.user.uid));
+    const userData = userDoc.exists() ? userDoc.data() as any : null;
+    if ((userData?.status || "").toLowerCase() === "terminated") {
+      await signOut(auth);
+      throw new Error("Your account has been terminated. Please contact support.");
+    }
+    // Check pendingVolunteers by email for terminated
+    const qTerminated = query(
+      collection(db, "pendingVolunteers"),
+      where("email", "==", normalizedEmail),
+      where("status", "==", "terminated"),
+      limit(1),
+    );
+    const snapTerminated = await getDocs(qTerminated);
+    if (!snapTerminated.empty) {
+      await signOut(auth);
+      throw new Error("Your account has been terminated. Please contact support.");
+    }
+  } catch (e) {
+    // if rules prevent reading, we skip; otherwise propagate thrown termination error
+    if (e instanceof Error && e.message?.includes("terminated")) {
+      throw e;
+    }
+  }
   if (email.toLowerCase() === ADMIN_EMAIL.toLowerCase()) {
     const adminProfile = { uid: cred.user.uid, email: cred.user.email, displayName: cred.user.displayName, role: "admin" as const };
     setLocalProfile(adminProfile);
@@ -140,6 +168,17 @@ export const subscribeToAuth = (cb: (user: AuthProfile | null) => void) => {
       return;
     }
     const profile = await getUserProfile(u);
+    // Optional: auto-logout if terminated status is detected post-login
+    try {
+      const userDoc = await getDoc(doc(db, "users", u.uid));
+      const userData = userDoc.exists() ? userDoc.data() as any : null;
+      if ((userData?.status || "").toLowerCase() === "terminated") {
+        await signOut(auth);
+        setLocalProfile(null);
+        cb(null);
+        return;
+      }
+    } catch {}
     if (profile) setLocalProfile(profile);
     cb(profile);
   });

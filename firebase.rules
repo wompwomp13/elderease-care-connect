@@ -54,6 +54,17 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // Form completion metrics (analytics)
+    match /formMetrics/{id} {
+      // allow public create so volunteer landing form can record without auth
+      allow create: if true
+        && ('type' in request.resource.data)
+        && ('durationMs' in request.resource.data);
+      // allow reads for signed-in users (admin dashboard)
+      allow read: if isSignedIn();
+      allow update, delete: if false;
+    }
+
     function isSignedIn() {
       return request.auth != null;
     }

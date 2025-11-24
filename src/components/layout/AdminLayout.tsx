@@ -12,6 +12,7 @@ const AdminLayout = ({ children }: { children: React.ReactNode }) => {
   const navItems = [
     { path: "/admin", icon: LayoutDashboard, label: "Dashboard" },
     { path: "/admin/applications", icon: Users, label: "Volunteer Applications" },
+    { path: "/admin/volunteers", icon: FileEdit, label: "Volunteer List" },
     { path: "/admin/requests", icon: ClipboardList, label: "Service Requests" },
   ];
 

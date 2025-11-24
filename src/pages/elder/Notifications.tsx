@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import { db } from "@/lib/firebase";
 import { collection, onSnapshot, orderBy, query, where } from "firebase/firestore";
 import { Separator } from "@/components/ui/separator";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import ElderChatbot from "@/components/elder/ElderChatbot";
 
 const ElderNavbar = () => {
@@ -120,23 +121,34 @@ const Notifications = () => {
                             <p className="text-xs text-muted-foreground">Confirmation Number</p>
                             <p className="font-medium">{n.receipt.confirmationNumber || `#SR-${n.id.slice(0, 8).toUpperCase()}`}</p>
                           </div>
-                          <div className="p-3 space-y-2 text-sm">
-                            <p className="font-medium">Payment Information</p>
+                          <div className="p-3 space-y-3 text-sm">
+                            <p className="font-medium">Receipt</p>
                             {Array.isArray(n.receipt.lineItems) && n.receipt.lineItems.length > 0 ? (
-                              <div className="space-y-1">
-                                {n.receipt.lineItems.map((li: any) => (
-                                  <div key={li.name} className="flex justify-between">
-                                    <span className="text-muted-foreground">
-                                      {li.name} ({formatPHP(li.adjustedRate ?? li.baseRate)}/hr × {(li.hours ?? 0).toFixed(2)} hr)
-                                    </span>
-                                    <span className="font-medium">{formatPHP(li.amount ?? 0)}</span>
-                                  </div>
-                                ))}
+                              <div className="rounded-md border">
+                                <Table>
+                                  <TableHeader>
+                                    <TableRow>
+                                      <TableHead>Service</TableHead>
+                                      <TableHead>Rate/hr</TableHead>
+                                      <TableHead>Hours</TableHead>
+                                      <TableHead className="text-right">Amount</TableHead>
+                                    </TableRow>
+                                  </TableHeader>
+                                  <TableBody>
+                                    {n.receipt.lineItems.map((li: any) => (
+                                      <TableRow key={li.name}>
+                                        <TableCell>{li.name}</TableCell>
+                                        <TableCell>{formatPHP(li.adjustedRate ?? li.baseRate)}</TableCell>
+                                        <TableCell>{(li.hours ?? 0).toFixed(2)}</TableCell>
+                                        <TableCell className="text-right">{formatPHP(li.amount ?? 0)}</TableCell>
+                                      </TableRow>
+                                    ))}
+                                  </TableBody>
+                                </Table>
                               </div>
                             ) : (
                               <div className="text-muted-foreground">No line items.</div>
                             )}
-                            <Separator />
                             <div className="flex justify-between">
                               <span className="text-muted-foreground">Subtotal</span>
                               <span className="font-medium">{formatPHP(n.receipt.subtotal ?? 0)}</span>
@@ -150,9 +162,9 @@ const Notifications = () => {
                               <span className="font-semibold">Total Amount</span>
                               <span className="font-bold text-primary">{formatPHP(n.receipt.total ?? 0)}</span>
                             </div>
-                            {n.receipt.dynamicPricing && (
+                            {n.receipt.volunteerTier && (
                               <p className="text-xs text-muted-foreground mt-2">
-                                Includes dynamic pricing: {n.receipt.dynamicPricing.tier} ({Math.round((n.receipt.dynamicPricing.percent ?? 0) * 100)}%)
+                                Tier: {n.receipt.volunteerTier} • Adjustment: {Math.round((n.receipt.rateAdjustment ?? 0) * 100)}%
                               </p>
                             )}
                           </div>

@@ -18,6 +18,7 @@ import PaymentConfirmation from "@/pages/elder/PaymentConfirmation";
 import MySchedule from "@/pages/elder/MySchedule";
 import Dashboard from "@/pages/admin/Dashboard";
 import VolunteerApplications from "@/pages/admin/VolunteerApplications";
+import VolunteerList from "@/pages/admin/VolunteerList";
 import ServiceRequests from "@/pages/admin/ServiceRequests";
 import CompanionHome from "@/pages/companion/CompanionHome";
 import MyAssignments from "@/pages/companion/MyAssignments";
@@ -48,6 +49,7 @@ const App = () => (
           <Route path="/elder/payment-confirmation" element={<PaymentConfirmation />} />
           <Route path="/admin" element={<Dashboard />} />
           <Route path="/admin/applications" element={<VolunteerApplications />} />
+          <Route path="/admin/volunteers" element={<VolunteerList />} />
           <Route path="/admin/requests" element={<ServiceRequests />} />
           
           <Route path="/companion" element={<CompanionHome />} />

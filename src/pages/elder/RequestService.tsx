@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import { getCurrentUser, logout } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
@@ -7,6 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import logo from "@/assets/logo.png";
 import { ChevronLeft, HeartHandshake, Home, ShoppingBasket, Users, Calendar as CalendarIcon, Check } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
@@ -81,13 +82,6 @@ const services = [
     description: "Regular check-ins and support at home",
     icon: Users,
     color: "purple"
-  },
-  {
-    id: "socialization",
-    name: "Socialization",
-    description: "Activities and outings for social engagement",
-    icon: Users,
-    color: "orange"
   }
 ];
 
@@ -101,11 +95,18 @@ const RequestService = () => {
   const [startTime, setStartTime] = useState<string | null>(null); // HH:mm (24h)
   const [endTime, setEndTime] = useState<string | null>(null); // HH:mm (24h)
   const [additionalNotes, setAdditionalNotes] = useState("");
-  const [clientName, setClientName] = useState("");
+  const [firstName, setFirstName] = useState("");
+  const [middleName, setMiddleName] = useState("");
+  const [familyName, setFamilyName] = useState("");
+  const [gender, setGender] = useState<string>("");
   const [clientAge, setClientAge] = useState("");
   const [clientAddress, setClientAddress] = useState("");
   const [serviceHoursById, setServiceHoursById] = useState<Record<string, number>>({});
   const [showSubmittedDialog, setShowSubmittedDialog] = useState(false);
+  const [servicesError, setServicesError] = useState<string | null>(null);
+  const [timeError, setTimeError] = useState<string | null>(null);
+  const formStartRef = useRef<number | null>(null);
+  const markFormStarted = () => { if (!formStartRef.current) formStartRef.current = Date.now(); };
 
   const getTotalSelectedHours = (): number => {
     return selectedServices.reduce((sum, id) => sum + (Number(serviceHoursById[id]) || 0), 0);
@@ -155,30 +156,37 @@ const RequestService = () => {
   }, [startTime, selectedServices, serviceHoursById]);
 
   const handleSubmit = () => {
-    if (!clientName.trim() || !clientAge.trim() || !clientAddress.trim()) {
+    setServicesError(null);
+    setTimeError(null);
+    if (!familyName.trim() || !firstName.trim() || !clientAge.trim() || !clientAddress.trim() || !gender) {
       toast({
-        title: "Please fill in all client information",
+        title: "Please complete client details",
         variant: "destructive"
       });
       return;
     }
     if (selectedServices.length === 0) {
-      toast({
-        title: "Please select at least one service",
-        variant: "destructive"
-      });
+      setServicesError("Please select at least one service.");
       return;
     }
     if (!selectedDate || !startTime || !endTime) {
-      toast({
-        title: "Please select date and time range",
-        variant: "destructive"
-      });
+      setTimeError("Choose a date and start time. End time fills in automatically.");
       return;
     }
-    if (!isEndAfterStart(startTime, endTime)) {
-      toast({ title: "End time must be after start time", variant: "destructive" });
-      return;
+    // Disallow scheduling in the past for same day
+    const today = new Date();
+    const isSameDay =
+      selectedDate.getFullYear() === today.getFullYear() &&
+      selectedDate.getMonth() === today.getMonth() &&
+      selectedDate.getDate() === today.getDate();
+    if (isSameDay) {
+      const [hh, mm] = startTime.split(":").map((x) => parseInt(x, 10));
+      const startMinutes = hh * 60 + mm;
+      const nowMinutes = today.getHours() * 60 + today.getMinutes();
+      if (startMinutes <= nowMinutes) {
+        setTimeError("For today, please pick a start time later than now.");
+        return;
+      }
     }
     // Validate hours for selected services
     const invalid = selectedServices.some(id => {
@@ -186,7 +194,7 @@ const RequestService = () => {
       return !Number.isFinite(val) || val <= 0;
     });
     if (invalid) {
-      toast({ title: "Set hours per service", description: "Each selected service must have hours > 0.", variant: "destructive" });
+      setServicesError("Set duration (hours) for each selected service.");
       return;
     }
     const serviceNames = selectedServices.map(id => services.find(s => s.id === id)?.name).filter(Boolean) as string[];
@@ -197,9 +205,14 @@ const RequestService = () => {
       if (name) perServiceHoursByName[name] = Number(serviceHoursById[id]) || 0;
     });
     const currentUser = user;
+    const elderName = [familyName.trim(), firstName.trim(), middleName.trim()].filter(Boolean).join(", ");
     const payload = {
       userId: currentUser?.id ?? null,
-      elderName: clientName.trim(),
+      elderName, // keep for backward compatibility
+      elderFirstName: firstName.trim(),
+      elderMiddleName: middleName.trim() || null,
+      elderFamilyName: familyName.trim(),
+      elderGender: gender,
       elderAge: clientAge.trim(),
       address: clientAddress.trim(),
       services: serviceNames,
@@ -217,6 +230,19 @@ const RequestService = () => {
 
     addDoc(collection(db, "serviceRequests"), payload)
       .then(() => {
+        // fire-and-forget: record form completion duration for analytics
+        try {
+          const startedAtMs = formStartRef.current ?? Date.now();
+          const durationMs = Math.max(0, Date.now() - startedAtMs);
+          addDoc(collection(db, "formMetrics"), {
+            type: "elder_request_service",
+            userRole: "elder",
+            userId: currentUser?.id ?? null,
+            durationMs,
+            startedAtMs,
+            submittedAt: serverTimestamp(),
+          });
+        } catch {}
         // Open center confirmation dialog; elder will click OK to continue
         setShowSubmittedDialog(true);
       })
@@ -246,15 +272,53 @@ const RequestService = () => {
                 <CardDescription>Please provide details about who will receive the service</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div>
-                  <Label htmlFor="clientName">Full Name *</Label>
-                  <Input
-                    id="clientName"
-                    placeholder="Enter full name"
-                    value={clientName}
-                    onChange={(e) => setClientName(e.target.value)}
-                    className="mt-1.5"
-                  />
+                <div className="grid sm:grid-cols-2 gap-3">
+                  <div>
+                    <Label htmlFor="familyName">Family name *</Label>
+                    <Input
+                      id="familyName"
+                      placeholder="e.g., Dela Cruz"
+                      value={familyName}
+                      onChange={(e) => setFamilyName(e.target.value)}
+                      className="mt-1.5"
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="firstName">First name *</Label>
+                    <Input
+                      id="firstName"
+                      placeholder="e.g., Juan"
+                      value={firstName}
+                      onChange={(e) => setFirstName(e.target.value)}
+                      className="mt-1.5"
+                    />
+                  </div>
+                </div>
+                <div className="grid sm:grid-cols-2 gap-3">
+                  <div>
+                    <Label htmlFor="middleName">Middle name</Label>
+                    <Input
+                      id="middleName"
+                      placeholder="Optional"
+                      value={middleName}
+                      onChange={(e) => setMiddleName(e.target.value)}
+                      className="mt-1.5"
+                    />
+                  </div>
+                  <div>
+                    <Label>Gender *</Label>
+                    <Select value={gender} onValueChange={(v) => setGender(v)}>
+                      <SelectTrigger className="mt-1.5">
+                        <SelectValue placeholder="Select gender" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="female">Female</SelectItem>
+                        <SelectItem value="male">Male</SelectItem>
+                        <SelectItem value="other">Other</SelectItem>
+                        <SelectItem value="prefer_not_to_say">Prefer not to say</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </div>
                 <div>
                   <Label htmlFor="clientAge">Age of Senior *</Label>
@@ -283,10 +347,11 @@ const RequestService = () => {
 
             <Card>
               <CardHeader>
-                <CardTitle>Select Services</CardTitle>
+                <CardTitle>1) Select Services</CardTitle>
                 <CardDescription>Choose one or more services you need assistance with</CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
+                {servicesError && <p className="text-sm text-destructive">{servicesError}</p>}
                 {services.map((service) => {
                   const Icon = service.icon;
                   const isSelected = selectedServices.includes(service.id);
@@ -321,7 +386,7 @@ const RequestService = () => {
                           <p className="text-sm text-muted-foreground">{service.description}</p>
                           {isSelected && (
                             <div className="mt-3 flex items-center gap-2">
-                              <Label className="text-xs text-muted-foreground">Hours</Label>
+                              <Label className="text-xs text-muted-foreground">Duration (hrs)</Label>
                               <Input
                                 type="number"
                                 min={0.5}
@@ -365,9 +430,9 @@ const RequestService = () => {
 
           {/* Right Column - Date & Time Selection */}
           <div className="space-y-6">
-            <Card>
+            <Card onFocusCapture={markFormStarted}>
               <CardHeader>
-                <CardTitle>Select Date</CardTitle>
+                <CardTitle>2) Select Date</CardTitle>
                 <CardDescription>Choose your preferred date</CardDescription>
               </CardHeader>
               <CardContent className="flex justify-center">
@@ -381,9 +446,9 @@ const RequestService = () => {
               </CardContent>
             </Card>
 
-            <Card>
+            <Card onFocusCapture={markFormStarted}>
               <CardHeader>
-                <CardTitle>Select Time Range</CardTitle>
+                <CardTitle>3) Choose Start Time</CardTitle>
                 <CardDescription>
                   {selectedDate ? format(selectedDate, "EEEE, MMMM d, yyyy") : "Select a date first"}
                 </CardDescription>
@@ -401,6 +466,7 @@ const RequestService = () => {
                 <p className="mt-2 text-xs text-muted-foreground">
                   End time is automatically calculated from the total selected service hours.
                 </p>
+                {timeError && <p className="mt-2 text-sm text-destructive">{timeError}</p>}
               </CardContent>
             </Card>
 
@@ -444,9 +510,23 @@ const RequestService = () => {
                   onClick={handleSubmit}
                   className="w-full mt-4"
                   size="lg"
+                  disabled={
+                    !familyName.trim() ||
+                    !firstName.trim() ||
+                    !clientAge.trim() ||
+                    !clientAddress.trim() ||
+                    !gender ||
+                    selectedServices.length === 0 ||
+                    !selectedDate ||
+                    !startTime ||
+                    !endTime
+                  }
                 >
                   Submit Request
                 </Button>
+                <p className="text-xs text-muted-foreground">
+                  You’ll receive a receipt in Notifications once a volunteer is assigned.
+                </p>
               </CardContent>
             </Card>
           </div>

@@ -7,6 +7,8 @@ import companionshipImage from "@/assets/elder-companionship.jpg";
 import { useMemo, useRef, useState, useEffect } from "react";
 import { HeartHandshake, ShoppingBasket, Home, Users, Calendar, Bell, MessageSquare, Sparkles, TrendingUp } from "lucide-react";
 import ElderChatbot from "@/components/elder/ElderChatbot";
+import { db } from "@/lib/firebase";
+import { collection, onSnapshot, query, where } from "firebase/firestore";
 
 const ElderNavbar = () => {
   const user = getCurrentUser();
@@ -181,6 +183,19 @@ const ElderHome = () => {
   const user = useMemo(() => getCurrentUser(), []);
   const [isChatOpen, setIsChatOpen] = useState(false);
   const greetingName = user?.name ?? "there";
+  const [pendingRequests, setPendingRequests] = useState<any[] | null>(null);
+
+  useEffect(() => {
+    const uid = user?.id;
+    if (!uid) { setPendingRequests([]); return; }
+    const q = query(collection(db, "serviceRequests"), where("userId", "==", uid), where("status", "==", "pending"));
+    const unsub = onSnapshot(q, (snap) => {
+      const rows = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
+      rows.sort((a, b) => (b.createdAt?.toMillis?.() ?? 0) - (a.createdAt?.toMillis?.() ?? 0));
+      setPendingRequests(rows);
+    });
+    return () => unsub();
+  }, [user?.id]);
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-background to-muted/20">
@@ -223,39 +238,27 @@ const ElderHome = () => {
       </div>
 
       <main className="container mx-auto px-4 py-12">
-        {/* Stats Cards */}
-        <div className="grid sm:grid-cols-3 gap-6 mb-12">
-          <div className="bg-gradient-to-br from-primary/10 to-primary/5 p-6 rounded-2xl border border-primary/20">
-            <div className="flex items-start justify-between mb-4">
-              <div className="p-3 bg-primary/10 rounded-xl">
-                <Calendar className="h-6 w-6 text-primary" />
-              </div>
-              <span className="text-xs font-medium text-primary bg-primary/10 px-2 py-1 rounded-full">Today</span>
-            </div>
-             <h3 className="text-sm text-muted-foreground mb-1">Next Visit for your loved one</h3>
-            <p className="text-2xl font-bold">3:00 PM</p>
+        {/* Next Support Visit - moved to top */}
+        <div className="bg-card p-6 rounded-2xl border shadow-sm mb-8">
+          <div className="flex items-center justify-between mb-4">
+             <h2 className="text-xl font-bold">Next Support Visit</h2>
+            <span className="text-sm font-medium text-primary">Today, 3:00 PM</span>
           </div>
-
-          <div className="bg-gradient-to-br from-blue-500/10 to-blue-500/5 p-6 rounded-2xl border border-blue-500/20">
-            <div className="flex items-start justify-between mb-4">
-              <div className="p-3 bg-blue-500/10 rounded-xl">
-                <MessageSquare className="h-6 w-6 text-blue-600" />
-              </div>
-              <span className="inline-flex items-center justify-center w-6 h-6 text-xs font-bold text-white bg-blue-600 rounded-full">1</span>
+          <div className="flex items-start gap-4 p-4 bg-gradient-to-r from-primary/5 to-transparent rounded-xl border border-primary/10">
+            <div className="h-14 w-14 rounded-full bg-primary/10 grid place-items-center flex-shrink-0">
+              <HeartHandshake className="h-7 w-7 text-primary" />
             </div>
-             <h3 className="text-sm text-muted-foreground mb-1">New Messages (with volunteers)</h3>
-            <p className="text-2xl font-bold">Unread</p>
-          </div>
-
-          <div className="bg-gradient-to-br from-green-500/10 to-green-500/5 p-6 rounded-2xl border border-green-500/20">
-            <div className="flex items-start justify-between mb-4">
-              <div className="p-3 bg-green-500/10 rounded-xl">
-                <TrendingUp className="h-6 w-6 text-green-600" />
+            <div className="flex-1">
+               <h3 className="font-semibold text-lg mb-1">Friendly Companionship for your loved one</h3>
+               <p className="text-sm text-muted-foreground mb-3">Volunteer Sam • 1 hour • At their home</p>
+              <div className="flex gap-3">
+                <Button size="sm" className="gap-2">
+                  <Calendar className="h-4 w-4" />
+                  View Details
+                </Button>
+                <Button size="sm" variant="outline">Reschedule</Button>
               </div>
-              <Bell className="h-5 w-5 text-green-600" />
             </div>
-             <h3 className="text-sm text-muted-foreground mb-1">This Week for your loved one</h3>
-             <p className="text-2xl font-bold">5 Activities Scheduled</p>
           </div>
         </div>
 
@@ -263,74 +266,33 @@ const ElderHome = () => {
         <div className="grid lg:grid-cols-3 gap-8">
           {/* Left Column */}
           <div className="lg:col-span-2 space-y-6">
-            {/* Upcoming Support */}
+            {/* Pending Requests */}
             <div className="bg-card p-6 rounded-2xl border shadow-sm">
               <div className="flex items-center justify-between mb-4">
-                 <h2 className="text-xl font-bold">Next Support Visit</h2>
-                <span className="text-sm font-medium text-primary">Today, 3:00 PM</span>
+                <h2 className="text-xl font-bold">Pending Requests</h2>
+                <span className="text-xs text-muted-foreground">Awaiting assignment</span>
               </div>
-              <div className="flex items-start gap-4 p-4 bg-gradient-to-r from-primary/5 to-transparent rounded-xl border border-primary/10">
-                <div className="h-14 w-14 rounded-full bg-primary/10 grid place-items-center flex-shrink-0">
-                  <HeartHandshake className="h-7 w-7 text-primary" />
-                </div>
-                <div className="flex-1">
-                   <h3 className="font-semibold text-lg mb-1">Friendly Companionship for your loved one</h3>
-                   <p className="text-sm text-muted-foreground mb-3">Volunteer Sam • 1 hour • At their home</p>
-                  <div className="flex gap-3">
-                    <Button size="sm" className="gap-2">
-                      <Calendar className="h-4 w-4" />
-                      View Details
-                    </Button>
-                    <Button size="sm" variant="outline">Reschedule</Button>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Services Grid */}
-            <div className="bg-card p-6 rounded-2xl border shadow-sm">
-               <h2 className="text-xl font-bold mb-4">Services for your loved one</h2>
-              <div className="grid sm:grid-cols-2 gap-4">
-                <div className="group p-4 rounded-xl border bg-gradient-to-br from-background to-muted/20 hover:shadow-md transition-all cursor-pointer">
-                  <div className="flex items-center gap-3 mb-2">
-                    <div className="p-2 bg-primary/10 rounded-lg group-hover:bg-primary/20 transition-colors">
-                      <Users className="h-5 w-5 text-primary" />
+              {pendingRequests === null ? (
+                <p className="text-sm text-muted-foreground">Loading…</p>
+              ) : pendingRequests.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No pending requests.</p>
+              ) : (
+                <div className="space-y-3">
+                  {pendingRequests.map((req) => (
+                    <div key={req.id} className="p-3 rounded-lg border flex items-center justify-between">
+                      <div className="min-w-0">
+                        <p className="font-medium truncate">{Array.isArray(req.services) ? req.services.join(", ") : req.services}</p>
+                        <p className="text-xs text-muted-foreground truncate">
+                          {req.serviceDateDisplay} • {req.startTimeText} - {req.endTimeText}
+                        </p>
+                      </div>
+                      <span className="text-xs font-medium px-2 py-1 rounded-full bg-amber-100 text-amber-800 border border-amber-200">
+                        Pending
+                      </span>
                     </div>
-                    <h3 className="font-semibold">Social Activities</h3>
-                  </div>
-                  <p className="text-sm text-muted-foreground">Join local events and group outings</p>
+                  ))}
                 </div>
-
-                <div className="group p-4 rounded-xl border bg-gradient-to-br from-background to-muted/20 hover:shadow-md transition-all cursor-pointer">
-                  <div className="flex items-center gap-3 mb-2">
-                    <div className="p-2 bg-blue-500/10 rounded-lg group-hover:bg-blue-500/20 transition-colors">
-                      <ShoppingBasket className="h-5 w-5 text-blue-600" />
-                    </div>
-                    <h3 className="font-semibold">Grocery Assistance</h3>
-                  </div>
-                  <p className="text-sm text-muted-foreground">Help with shopping and deliveries</p>
-                </div>
-
-                <div className="group p-4 rounded-xl border bg-gradient-to-br from-background to-muted/20 hover:shadow-md transition-all cursor-pointer">
-                  <div className="flex items-center gap-3 mb-2">
-                    <div className="p-2 bg-green-500/10 rounded-lg group-hover:bg-green-500/20 transition-colors">
-                      <Home className="h-5 w-5 text-green-600" />
-                    </div>
-                    <h3 className="font-semibold">Light Housekeeping</h3>
-                  </div>
-                  <p className="text-sm text-muted-foreground">Keep your space tidy and comfortable</p>
-                </div>
-
-                <div className="group p-4 rounded-xl border bg-gradient-to-br from-background to-muted/20 hover:shadow-md transition-all cursor-pointer">
-                  <div className="flex items-center gap-3 mb-2">
-                    <div className="p-2 bg-purple-500/10 rounded-lg group-hover:bg-purple-500/20 transition-colors">
-                      <HeartHandshake className="h-5 w-5 text-purple-600" />
-                    </div>
-                    <h3 className="font-semibold">Home Visits</h3>
-                  </div>
-                  <p className="text-sm text-muted-foreground">Regular check-ins and support</p>
-                </div>
-              </div>
+              )}
             </div>
           </div>
 
@@ -346,18 +308,76 @@ const ElderHome = () => {
                    <span>Request a Service</span>
                   </Button>
                 </Link>
-                <Button variant="outline" className="w-full justify-start gap-3 h-auto py-3" aria-label="View schedule">
-                  <Calendar className="h-5 w-5 text-blue-600" />
-                   <span>View Schedule</span>
-                </Button>
-                <Button variant="outline" className="w-full justify-start gap-3 h-auto py-3" aria-label="Check notifications">
-                  <Bell className="h-5 w-5 text-green-600" />
-                   <span>Notifications</span>
-                </Button>
+                <Link to="/elder/schedule" className="block">
+                  <Button variant="outline" className="w-full justify-start gap-3 h-auto py-3" aria-label="View schedule">
+                    <Calendar className="h-5 w-5 text-blue-600" />
+                     <span>View Schedule</span>
+                  </Button>
+                </Link>
+                <Link to="/elder/notifications" className="block">
+                  <Button variant="outline" className="w-full justify-start gap-3 h-auto py-3" aria-label="Check notifications">
+                    <Bell className="h-5 w-5 text-green-600" />
+                     <span>Notifications</span>
+                  </Button>
+                </Link>
                 <Button variant="outline" className="w-full justify-start gap-3 h-auto py-3" aria-label="Message companion">
                   <MessageSquare className="h-5 w-5 text-purple-600" />
                    <span>Message Volunteer</span>
                 </Button>
+              </div>
+            </div>
+
+            {/* Services - compact card on right side */}
+            <div className="bg-card p-6 rounded-2xl border shadow-sm">
+               <h2 className="text-xl font-bold mb-4">Services for your loved one</h2>
+              <div className="grid gap-3">
+                <div className="group p-3 rounded-lg border bg-gradient-to-br from-background to-muted/20 hover:shadow-sm transition-all cursor-pointer">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-blue-500/10 rounded-lg group-hover:bg-blue-500/20 transition-colors">
+                      <ShoppingBasket className="h-5 w-5 text-blue-600" />
+                    </div>
+                    <div>
+                      <h3 className="font-semibold leading-tight">Running Errands</h3>
+                      <p className="text-xs text-muted-foreground">Help with shopping and deliveries</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="group p-3 rounded-lg border bg-gradient-to-br from-background to-muted/20 hover:shadow-sm transition-all cursor-pointer">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-green-500/10 rounded-lg group-hover:bg-green-500/20 transition-colors">
+                      <Home className="h-5 w-5 text-green-600" />
+                    </div>
+                    <div>
+                      <h3 className="font-semibold leading-tight">Light Housekeeping</h3>
+                      <p className="text-xs text-muted-foreground">Keep your space tidy and comfortable</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="group p-3 rounded-lg border bg-gradient-to-br from-background to-muted/20 hover:shadow-sm transition-all cursor-pointer">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-purple-500/10 rounded-lg group-hover:bg-purple-500/20 transition-colors">
+                      <HeartHandshake className="h-5 w-5 text-purple-600" />
+                    </div>
+                    <div>
+                      <h3 className="font-semibold leading-tight">Home Visits</h3>
+                      <p className="text-xs text-muted-foreground">Regular check-ins and support</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="group p-3 rounded-lg border bg-gradient-to-br from-background to-muted/20 hover:shadow-sm transition-all cursor-pointer">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-primary/10 rounded-lg group-hover:bg-primary/20 transition-colors">
+                      <Users className="h-5 w-5 text-primary" />
+                    </div>
+                    <div>
+                      <h3 className="font-semibold leading-tight">Companionship</h3>
+                      <p className="text-xs text-muted-foreground">Friendly support and conversation</p>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
 
