@@ -6,7 +6,7 @@ import {
   onAuthStateChanged,
   User,
 } from "firebase/auth";
-import { collection, doc, getDoc, getDocs, limit, query, setDoc, where } from "firebase/firestore";
+import { collection, doc, getDoc, getDocs, limit, onSnapshot, query, setDoc, where } from "firebase/firestore";
 
 export type UserRole = "elderly" | "admin" | "companion";
 
@@ -155,7 +155,13 @@ export const logout = async (): Promise<void> => {
 };
 
 export const subscribeToAuth = (cb: (user: AuthProfile | null) => void) => {
+  let userDocUnsub: (() => void) | null = null;
   return onAuthStateChanged(auth, async (u) => {
+    // Cleanup previous doc subscription
+    if (userDocUnsub) {
+      userDocUnsub();
+      userDocUnsub = null;
+    }
     if (!u) {
       setLocalProfile(null);
       cb(null);
@@ -167,20 +173,31 @@ export const subscribeToAuth = (cb: (user: AuthProfile | null) => void) => {
       cb(adminP);
       return;
     }
-    const profile = await getUserProfile(u);
-    // Optional: auto-logout if terminated status is detected post-login
-    try {
-      const userDoc = await getDoc(doc(db, "users", u.uid));
-      const userData = userDoc.exists() ? userDoc.data() as any : null;
-      if ((userData?.status || "").toLowerCase() === "terminated") {
+    // Live subscribe to the user's Firestore profile so edits reflect everywhere instantly
+    userDocUnsub = onSnapshot(doc(db, "users", u.uid), async (snap) => {
+      if (!snap.exists()) {
+        setLocalProfile(null);
+        cb(null);
+        return;
+      }
+      const data = snap.data() as any;
+      // Auto-logout if terminated detected
+      if ((data?.status || "").toLowerCase() === "terminated") {
         await signOut(auth);
         setLocalProfile(null);
         cb(null);
         return;
       }
-    } catch {}
-    if (profile) setLocalProfile(profile);
-    cb(profile);
+      const profile: AuthProfile = {
+        uid: u.uid,
+        email: u.email ?? data.email ?? null,
+        displayName: u.displayName ?? data.displayName ?? null,
+        role: data.role,
+        phone: data.phone ?? null,
+      };
+      setLocalProfile(profile);
+      cb(profile);
+    });
   });
 };
 

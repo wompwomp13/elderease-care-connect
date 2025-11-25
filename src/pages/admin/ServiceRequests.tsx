@@ -17,7 +17,7 @@ const SERVICE_RATES: Record<string, number> = {
   "Light Housekeeping": 170,
   "Running Errands": 200,
   "Home Visits": 180,
-  "Socialization": 230,
+  // "Socialization" intentionally omitted from display; legacy data will be normalized out
 };
 
 type AdjustmentInfo = { tier: "Associate" | "Proficient" | "Advanced" | "Expert"; percent: number };
@@ -114,14 +114,30 @@ const ServiceRequests = () => {
     return () => unsub();
   }, []);
 
-  const toServiceId = (nameOrId: string): string => {
+  const toServiceId = (nameOrId: string): "companionship" | "housekeeping" | "errands" | "visits" | "socialization" | "unknown" => {
     const v = (nameOrId || "").toLowerCase();
     if (v.includes("companionship")) return "companionship";
     if (v.includes("housekeeping")) return "housekeeping";
     if (v.includes("errand")) return "errands";
     if (v.includes("visit")) return "visits";
     if (v.includes("social")) return "socialization";
-    return v;
+    return "unknown";
+  };
+  const ALLOWED_SERVICE_LABELS: Record<"companionship" | "housekeeping" | "errands" | "visits", string> = {
+    companionship: "Companionship",
+    housekeeping: "Light Housekeeping",
+    errands: "Running Errands",
+    visits: "Home Visits",
+  };
+  const normalizeServiceLabels = (services: string[] | undefined | null): string[] => {
+    const set = new Set<string>();
+    (services || []).forEach((s) => {
+      const id = toServiceId(s);
+      if (id === "companionship" || id === "housekeeping" || id === "errands" || id === "visits") {
+        set.add(ALLOWED_SERVICE_LABELS[id]);
+      }
+    });
+    return Array.from(set);
   };
 
   const getCompatibleVolunteers = (req: any): any[] => {
@@ -130,7 +146,9 @@ const ServiceRequests = () => {
       ? req.services.map((s: string) => toServiceId(s))
       : req.service ? [toServiceId(req.service)] : [];
     const matched = volunteers.filter((v) => {
-      const volServiceIds: string[] = Array.isArray(v.services) ? v.services.map((s: string) => toServiceId(s)) : [];
+      const volServiceIds: string[] = Array.isArray(v.services) ? v.services.map((s: string) => toServiceId(s)).filter((x: string) =>
+        x === "companionship" || x === "housekeeping" || x === "errands" || x === "visits"
+      ) : [];
       return reqServiceIds.some((sid) => volServiceIds.includes(sid));
     })
     // Enrich with live rating data
@@ -140,6 +158,8 @@ const ServiceRequests = () => {
       const tasksDone = tasksMap[emailKey] ?? 0;
       return {
         ...v,
+        // Attach normalized services for consistent UI display
+        services: normalizeServiceLabels(v.services),
         rating: agg?.avg ?? null,
         ratingCount: agg?.count ?? 0,
         tasksCompleted: tasksDone,
@@ -438,7 +458,7 @@ const ServiceRequests = () => {
                                               {(v.bio || `Experienced in ${Array.isArray(v.services) ? v.services.slice(0,2).join(" and ") : "care"} services.`).toString()}
                                             </p>
                                             <div className="flex flex-wrap gap-1.5 mb-3">
-                                              {(v.services || []).slice(0, 3).map((s: string) => (
+                                              {normalizeServiceLabels(v.services || []).slice(0, 3).map((s: string) => (
                                                 <Badge key={s} variant="outline" className="capitalize text-xs">
                                                   {s.replace("_", " ")}
                                                 </Badge>
@@ -482,7 +502,7 @@ const ServiceRequests = () => {
                                                   <div>
                                                     <p className="font-medium text-foreground mb-1">Services</p>
                                                     <div className="flex flex-wrap gap-1.5">
-                                                      {(v.services || []).map((s: string) => (
+                                                      {normalizeServiceLabels(v.services || []).map((s: string) => (
                                                         <Badge key={s} variant="secondary" className="capitalize">{s.replace("_", " ")}</Badge>
                                                       ))}
                                                     </div>

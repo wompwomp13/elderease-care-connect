@@ -11,6 +11,7 @@ import { db } from "@/lib/firebase";
 import { collection, doc, getDocs, onSnapshot, query, serverTimestamp, updateDoc, where } from "firebase/firestore";
 import { useToast } from "@/components/ui/use-toast";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { cn } from "@/lib/utils";
 
 type Volunteer = {
   id: string;
@@ -45,6 +46,39 @@ const VolunteerList = () => {
     gender: "",
   });
   const [terminateTarget, setTerminateTarget] = useState<Volunteer | null>(null);
+  const [phoneError, setPhoneError] = useState<string | null>(null);
+
+  // Allowed service catalog (normalized)
+  const ALLOWED_SERVICE_LABELS: Record<string, string> = {
+    companionship: "Companionship",
+    housekeeping: "Light Housekeeping",
+    errands: "Running Errands",
+    visits: "Home Visits",
+  };
+  const toServiceId = (nameOrId: string): keyof typeof ALLOWED_SERVICE_LABELS | "unknown" => {
+    const v = (nameOrId || "").toLowerCase();
+    if (v.includes("companionship")) return "companionship";
+    if (v.includes("housekeeping")) return "housekeeping";
+    if (v.includes("errand")) return "errands";
+    if (v.includes("visit")) return "visits";
+    return "unknown";
+  };
+  const normalizeServices = (services: string[]): string[] => {
+    const set = new Set<string>();
+    for (const s of services || []) {
+      const id = toServiceId(s);
+      if (id !== "unknown") set.add(ALLOWED_SERVICE_LABELS[id]);
+    }
+    return Array.from(set);
+  };
+  const normalizePHPhone = (input: string): string | null => {
+    const digits = (input || "").replace(/\D+/g, "");
+    if (digits.startsWith("639") && digits.length === 12) return `+${digits}`;
+    if (digits.startsWith("09") && digits.length === 11) return `+63${digits.slice(1)}`;
+    if (digits.startsWith("9") && digits.length === 10) return `+63${digits}`;
+    if (digits.startsWith("63") && digits.length === 12) return `+${digits}`;
+    return null;
+  };
 
   // Load volunteers (from pendingVolunteers where status approved/terminated)
   useEffect(() => {
@@ -104,11 +138,12 @@ const VolunteerList = () => {
 
   const openEdit = (v: Volunteer) => {
     setEditing(v);
+    setPhoneError(null);
     setForm({
       fullName: v.fullName || "",
       phone: v.phone || "",
       address: v.address || "",
-      services: Array.isArray(v.services) ? v.services : [],
+      services: Array.isArray(v.services) ? normalizeServices(v.services) : [],
       gender: v.gender || "",
     });
   };
@@ -116,14 +151,37 @@ const VolunteerList = () => {
   const saveEdit = async () => {
     if (!editing) return;
     try {
+      const normalizedPhone = normalizePHPhone(form.phone);
+      if (!normalizedPhone) {
+        setPhoneError("Please use +63 9XXXXXXXXX");
+        toast({ title: "Invalid Philippine phone number", description: "Use +63 9XXXXXXXXX or 09XXXXXXXXX", variant: "destructive" });
+        return;
+      }
+      const normalizedServices = normalizeServices(form.services);
+
       await updateDoc(doc(db, "pendingVolunteers", editing.id), {
         fullName: form.fullName.trim(),
-        phone: form.phone.trim(),
+        phone: normalizedPhone,
         address: form.address.trim(),
-        services: form.services,
+        services: normalizedServices,
         gender: form.gender || null,
         updatedAt: serverTimestamp(),
       });
+      // Also update matching users profile (by email) so all pages reflect edits
+      if (editing.email) {
+        const uq = query(collection(db, "users"), where("email", "==", editing.email.toLowerCase()));
+        const usnap = await getDocs(uq);
+        for (const udoc of usnap.docs) {
+          await updateDoc(doc(db, "users", udoc.id), {
+            displayName: form.fullName.trim(),
+            phone: normalizedPhone,
+            address: form.address.trim(),
+            services: normalizedServices,
+            gender: form.gender || null,
+            updatedAt: serverTimestamp(),
+          });
+        }
+      }
       toast({ title: "Volunteer updated." });
       setEditing(null);
     } catch (e: any) {
@@ -241,7 +299,15 @@ const VolunteerList = () => {
               <div className="grid sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-sm font-medium mb-1">Phone</label>
-                  <Input value={form.phone} onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))} placeholder="+63 9XXXXXXXXX" />
+                  <Input
+                    value={form.phone}
+                    onChange={(e) => { setPhoneError(null); setForm((f) => ({ ...f, phone: e.target.value })); }}
+                    placeholder="+63 9XXXXXXXXX"
+                    className={cn(phoneError && "border-destructive focus-visible:ring-destructive")}
+                    aria-invalid={!!phoneError}
+                    aria-label="Phone Number"
+                  />
+                  {phoneError && <p className="text-xs text-destructive mt-1">{phoneError}</p>}
                 </div>
                 <div>
                   <label className="block text-sm font-medium mb-1">Gender</label>

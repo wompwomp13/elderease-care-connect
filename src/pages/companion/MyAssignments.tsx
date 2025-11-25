@@ -3,13 +3,14 @@ import { Button } from "@/components/ui/button";
 import { getCurrentUser, logout, subscribeToAuth, type AuthProfile } from "@/lib/auth";
 import logo from "@/assets/logo.png";
 import { Calendar as DateCalendar } from "@/components/ui/calendar";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Calendar, MapPin, Phone, User, Clock, HeartHandshake, ShoppingBasket, CheckCircle2 } from "lucide-react";
 import { db } from "@/lib/firebase";
 import { collection, onSnapshot, orderBy, query, where, updateDoc, doc, addDoc, serverTimestamp, getDoc } from "firebase/firestore";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Button as UIButton } from "@/components/ui/button";
 import { useToast } from "@/components/ui/use-toast";
+import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "@/components/ui/pagination";
 
 const CompanionNavbar = () => {
   const user = getCurrentUser();
@@ -53,6 +54,9 @@ const MyAssignments = () => {
   const [requestNotes, setRequestNotes] = useState<string | null>(null);
   const [updatingById, setUpdatingById] = useState<Record<string, boolean>>({});
   const [justCompletedById, setJustCompletedById] = useState<Record<string, boolean>>({});
+  const [dayFilterEnabled, setDayFilterEnabled] = useState<boolean>(false);
+  const [page, setPage] = useState<number>(1);
+  const perPage = 5;
   const { toast } = useToast();
 
   useEffect(() => {
@@ -148,6 +152,49 @@ const MyAssignments = () => {
     return h > 0 ? `${h}h${m ? ` ${m}m` : ""}` : `${m}m`;
   };
 
+  // Filter by selected day (only when a day is chosen)
+  const filteredAssignments = useMemo(() => {
+    const list = assignments || [];
+    if (!dayFilterEnabled || !selectedDate) return list;
+    const start = new Date(selectedDate);
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(selectedDate);
+    end.setHours(23, 59, 59, 999);
+    const startMs = start.getTime();
+    const endMs = end.getTime();
+    return list.filter((a) => {
+      const ts = typeof a.serviceDateTS === "number" ? a.serviceDateTS : (a.serviceDateTS?.toMillis?.() ?? 0);
+      return ts >= startMs && ts <= endMs;
+    });
+  }, [assignments, selectedDate, dayFilterEnabled]);
+
+  // Sort: incomplete first, then by date/time ascending
+  const sortedAssignments = useMemo(() => {
+    const toMinutes = (t?: string | null) => {
+      if (!t) return 0;
+      const [h, m] = String(t).split(":").map((x: string) => parseInt(x || "0", 10));
+      return (h * 60 + (m || 0)) | 0;
+    };
+    return [...filteredAssignments].sort((a, b) => {
+      const aCompleted = a.status === "completed";
+      const bCompleted = b.status === "completed";
+      if (aCompleted !== bCompleted) return aCompleted ? 1 : -1;
+      const aDate = typeof a.serviceDateTS === "number" ? a.serviceDateTS : (a.serviceDateTS?.toMillis?.() ?? 0);
+      const bDate = typeof b.serviceDateTS === "number" ? b.serviceDateTS : (b.serviceDateTS?.toMillis?.() ?? 0);
+      if (aDate !== bDate) return aDate - bDate;
+      return toMinutes(a.startTime24) - toMinutes(b.startTime24);
+    });
+  }, [filteredAssignments]);
+
+  // Pagination
+  const totalPages = Math.max(1, Math.ceil(sortedAssignments.length / perPage));
+  const safePage = Math.min(page, totalPages);
+  const pageItems = useMemo(() => {
+    const start = (safePage - 1) * perPage;
+    return sortedAssignments.slice(start, start + perPage);
+  }, [sortedAssignments, safePage]);
+  useEffect(() => { setPage(1); }, [dayFilterEnabled, selectedDate, assignments?.length]);
+
   return (
     <div className="min-h-screen bg-gradient-to-b from-background to-muted/20 relative overflow-hidden">
       {/* Organic blobs */}
@@ -167,43 +214,64 @@ const MyAssignments = () => {
           <div className="lg:col-span-2 space-y-5">
             {assignments === null ? (
               <div className="p-6 text-muted-foreground">Loading assignments…</div>
-            ) : assignments.length === 0 ? (
+            ) : sortedAssignments.length === 0 ? (
               <div className="p-6 text-muted-foreground">No assignments yet.</div>
-            ) : assignments.map((a) => (
-              <div key={a.id} className="rounded-3xl border bg-card p-5 shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-lg">
-                <div className="flex items-start justify-between gap-4">
-                  <div className="flex items-start gap-3">
-                    <div className="h-12 w-12 rounded-2xl bg-primary/10 grid place-items-center">
-                      <HeartHandshake className="h-6 w-6 text-primary" />
-                    </div>
-                    <div>
-                      <p className="text-lg font-semibold">{Array.isArray(a.services) ? a.services.join(", ") : a.services}</p>
-                      <p className="text-sm text-muted-foreground flex items-center gap-2"><Calendar className="h-4 w-4" /> {a.startTimeText} • {a.endTimeText}</p>
-                      <p className="text-sm text-muted-foreground flex items-center gap-2"><MapPin className="h-4 w-4" /> {a.address || "—"}</p>
+            ) : (
+              <>
+                {pageItems.map((a) => (
+                  <div key={a.id} className="rounded-3xl border bg-card p-5 shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-lg">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex items-start gap-3">
+                        <div className="h-12 w-12 rounded-2xl bg-primary/10 grid place-items-center">
+                          <HeartHandshake className="h-6 w-6 text-primary" />
+                        </div>
+                        <div>
+                          <p className="text-lg font-semibold">{Array.isArray(a.services) ? a.services.join(", ") : a.services}</p>
+                          <p className="text-sm text-muted-foreground flex items-center gap-2"><Calendar className="h-4 w-4" /> {a.startTimeText} • {a.endTimeText}</p>
+                          <p className="text-sm text-muted-foreground flex items-center gap-2"><MapPin className="h-4 w-4" /> {a.address || "—"}</p>
+                        </div>
+                      </div>
+                      <div className="flex gap-2">
+                        <Button size="sm" variant="outline" onClick={() => setDetailsTarget(a)}>View Details</Button>
+                        {(() => {
+                          const isCompleted = Boolean(a?.status === "completed" || a?.awaitingGuardianConfirm || justCompletedById[a.id]);
+                          const isLoading = Boolean(updatingById[a.id]);
+                          if (isCompleted) {
+                            return (
+                              <Button size="sm" className="gap-2 bg-emerald-600 hover:bg-emerald-600 text-white" disabled>
+                                <CheckCircle2 className="h-4 w-4" /> Completed
+                              </Button>
+                            );
+                          }
+                          return (
+                            <Button size="sm" className="gap-2" onClick={() => markCompleted(a)} disabled={isLoading} aria-busy={isLoading}>
+                              <CheckCircle2 className="h-4 w-4" /> {isLoading ? "Saving…" : "Mark Completed"}
+                            </Button>
+                          );
+                        })()}
+                      </div>
                     </div>
                   </div>
-                  <div className="flex gap-2">
-                    <Button size="sm" variant="outline" onClick={() => setDetailsTarget(a)}>View Details</Button>
-                    {(() => {
-                      const isCompleted = Boolean(a?.status === "completed" || a?.awaitingGuardianConfirm || justCompletedById[a.id]);
-                      const isLoading = Boolean(updatingById[a.id]);
-                      if (isCompleted) {
-                        return (
-                          <Button size="sm" className="gap-2 bg-emerald-600 hover:bg-emerald-600 text-white" disabled>
-                            <CheckCircle2 className="h-4 w-4" /> Completed
-                          </Button>
-                        );
-                      }
-                      return (
-                        <Button size="sm" className="gap-2" onClick={() => markCompleted(a)} disabled={isLoading} aria-busy={isLoading}>
-                          <CheckCircle2 className="h-4 w-4" /> {isLoading ? "Saving…" : "Mark Completed"}
-                        </Button>
-                      );
-                    })()}
-                  </div>
-                </div>
-              </div>
-            ))}
+                ))}
+                <Pagination className="mt-2">
+                  <PaginationContent>
+                    <PaginationItem>
+                      <PaginationPrevious onClick={(e) => { e.preventDefault(); setPage(Math.max(1, safePage - 1)); }} href="#" />
+                    </PaginationItem>
+                    {Array.from({ length: totalPages }).map((_, i) => (
+                      <PaginationItem key={i}>
+                        <PaginationLink href="#" isActive={safePage === (i + 1)} onClick={(e) => { e.preventDefault(); setPage(i + 1); }}>
+                          {i + 1}
+                        </PaginationLink>
+                      </PaginationItem>
+                    ))}
+                    <PaginationItem>
+                      <PaginationNext onClick={(e) => { e.preventDefault(); setPage(Math.min(totalPages, safePage + 1)); }} href="#" />
+                    </PaginationItem>
+                  </PaginationContent>
+                </Pagination>
+              </>
+            )}
           </div>
 
           {/* Right: schedule */}
@@ -211,10 +279,25 @@ const MyAssignments = () => {
             <div className="rounded-3xl border bg-card p-5 shadow-sm">
               <div className="flex items-center justify-between mb-3">
                 <h2 className="text-lg font-semibold">Weekly Calendar</h2>
-                <span className="text-xs text-muted-foreground">Plan ahead</span>
+                <div className="flex items-center gap-3">
+                  {dayFilterEnabled && (
+                    <button
+                      className="text-xs underline text-muted-foreground hover:text-foreground"
+                      onClick={() => { setDayFilterEnabled(false); }}
+                    >
+                      Show all days
+                    </button>
+                  )}
+                  <span className="text-xs text-muted-foreground">Plan ahead</span>
+                </div>
               </div>
               <div className="flex justify-center">
-                <DateCalendar mode="single" selected={selectedDate} onSelect={setSelectedDate} className="rounded-xl border" />
+                <DateCalendar
+                  mode="single"
+                  selected={selectedDate}
+                  onSelect={(d: Date | undefined) => { setSelectedDate(d); if (d) setDayFilterEnabled(true); }}
+                  className="rounded-xl border"
+                />
               </div>
             </div>
 

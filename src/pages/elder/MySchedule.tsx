@@ -81,6 +81,7 @@ const MySchedule = () => {
   };
 
   const upcoming = useMemo(() => (assignments || []).filter(a => a.status !== "completed"), [assignments]);
+  const needsConfirm = useMemo(() => (assignments || []).filter(a => a.status === "completed" && !a.guardianConfirmed), [assignments]);
   const completed = useMemo(() => (assignments || []).filter(a => a.status === "completed" || a.guardianConfirmed), [assignments]);
   const filteredCompleted = useMemo(() => {
     const term = appliedSearch.trim().toLowerCase();
@@ -120,6 +121,42 @@ const MySchedule = () => {
           <div className="p-6 text-muted-foreground">No scheduled services yet.</div>
         ) : (
           <div className="grid lg:grid-cols-2 gap-6">
+            {/* Needs confirmation */}
+            {needsConfirm.length > 0 && (
+              <div className="lg:col-span-2">
+                <h2 className="text-xl font-semibold mb-3">Needs Your Confirmation</h2>
+                <div className="grid md:grid-cols-2 gap-6">
+                  {needsConfirm.map((a) => (
+                    <Card key={a.id} className="overflow-hidden hover:shadow-md transition-all border-amber-200">
+                      <div className="p-5 flex items-start gap-4">
+                        <div className="h-14 w-14 rounded-full bg-amber-100 grid place-items-center flex-shrink-0">
+                          <User className="h-7 w-7 text-amber-600" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <h3 className="text-xl font-semibold leading-tight truncate">{Array.isArray(a.services) ? a.services.join(", ") : a.services}</h3>
+                          <p className="text-sm text-muted-foreground truncate">{a.address || "At your home"}</p>
+                          <div className="mt-2 flex flex-wrap gap-3 text-sm text-muted-foreground">
+                            <span className="flex items-center gap-1"><Clock className="h-4 w-4" /> {a.startTimeText} - {a.endTimeText}</span>
+                            <span className="flex items-center gap-1"><Calendar className="h-4 w-4" /> {a.serviceDateTS ? new Date(a.serviceDateTS).toLocaleDateString() : "—"}</span>
+                            {a.volunteerName && (
+                              <span className="flex items-center gap-1"><User className="h-4 w-4" /> {a.volunteerName}</span>
+                            )}
+                          </div>
+                          {a.notes && (
+                            <p className="mt-3 text-sm">{a.notes}</p>
+                          )}
+                        </div>
+                        <div className="flex flex-col gap-2">
+                          <Button size="sm" onClick={() => setRateTarget(a)}>Confirm Completed</Button>
+                          <Button size="sm" variant="outline" className="gap-2" aria-label="Call volunteer"><Phone className="h-4 w-4" /> Call</Button>
+                        </div>
+                      </div>
+                    </Card>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {upcoming.map((a) => (
               <Card key={a.id} className="overflow-hidden hover:shadow-md transition-all">
                 <div className="p-5 flex items-start gap-4">
@@ -141,9 +178,6 @@ const MySchedule = () => {
                     )}
                   </div>
                   <div className="flex flex-col gap-2">
-                    {a.status === "completed" && !a.guardianConfirmed && (
-                      <Button size="sm" onClick={() => setRateTarget(a)}>Confirm Completed</Button>
-                    )}
                     <Button size="sm" variant="outline" className="gap-2" aria-label="Call volunteer"><Phone className="h-4 w-4" /> Call</Button>
                   </div>
                 </div>
