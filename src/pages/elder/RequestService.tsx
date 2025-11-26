@@ -115,6 +115,7 @@ const RequestService = () => {
   const [preferredVolunteerEmail, setPreferredVolunteerEmail] = useState<string | null>(null);
   const [preferredVolunteerName, setPreferredVolunteerName] = useState<string | null>(null);
   const [busyByEmail, setBusyByEmail] = useState<Record<string, Array<[number, number]>>>({}); // for selected date only
+  const [busyLoading, setBusyLoading] = useState<boolean>(false);
 
   const getTotalSelectedHours = (): number => {
     return selectedServices.reduce((sum, id) => sum + (Number(serviceHoursById[id]) || 0), 0);
@@ -216,7 +217,10 @@ const RequestService = () => {
 
   // For selected date, compute busy intervals by volunteer email
   useEffect(() => {
-    if (!selectedDate) { setBusyByEmail({}); return; }
+    if (!selectedDate) { setBusyByEmail({}); setBusyLoading(false); return; }
+    // Clear previous day intervals immediately to avoid stale "Unavailable" flashes
+    setBusyByEmail({});
+    setBusyLoading(true);
     const dayMs = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate()).getTime();
     const q = query(collection(db, "assignments"), where("serviceDateTS", "==", dayMs));
     const unsub = onSnapshot(q, (snap) => {
@@ -228,12 +232,20 @@ const RequestService = () => {
         const [eh, em] = String(a.endTime24 || "").split(":").map((x: string) => parseInt(x || "0", 10));
         const startMin = sh * 60 + (sm || 0);
         const endMin = eh * 60 + (em || 0);
-        if (!email || !isFinite(startMin) || !isFinite(endMin) || endMin <= startMin) return;
+        if (!email || !isFinite(startMin) || !isFinite(endMin)) return;
         if (a.status === "cancelled") return;
         if (!map[email]) map[email] = [];
-        map[email].push([startMin, endMin]);
+        // Handle cross-midnight assignments by splitting into two intervals
+        if (endMin <= startMin) {
+          // interval [startMin, 1440) and [0, endMin]
+          map[email].push([startMin, 24 * 60]);
+          if (endMin > 0) map[email].push([0, endMin]);
+        } else {
+          map[email].push([startMin, endMin]);
+        }
       });
       setBusyByEmail(map);
+      setBusyLoading(false);
     });
     return () => unsub();
   }, [selectedDate]);
@@ -256,7 +268,7 @@ const RequestService = () => {
       const tasksDone = tasksMap[email] ?? 0;
       const intervals = busyByEmail[email] || [];
       let available: boolean | null = null;
-      if (rs != null && re != null) {
+      if (!busyLoading && rs != null && re != null) {
         available = !intervals.some(([bs, be]) => hasOverlap(rs, re, bs, be));
       }
       return {
@@ -317,6 +329,22 @@ const RequestService = () => {
     if (invalid) {
       setServicesError("Set duration (hours) for each selected service.");
       return;
+    }
+    // If preferred volunteer selected, block submission when they are unavailable
+    if (preferredVolunteerEmail) {
+      const sel = enrichedVolunteers.find((x) => (x.email || "").toLowerCase() === preferredVolunteerEmail);
+      if (busyLoading) {
+        toast({ title: "Checking availability", description: "Please wait a moment while we verify your preferred volunteer's schedule.", variant: "destructive" });
+        return;
+      }
+      if (sel && sel.available === false) {
+        toast({
+          title: "Preferred volunteer unavailable",
+          description: "Your preferred volunteer isn’t available at the selected time. Please pick another time or submit without a preference.",
+          variant: "destructive",
+        });
+        return;
+      }
     }
     const serviceNames = selectedServices.map(id => services.find(s => s.id === id)?.name).filter(Boolean) as string[];
     // Build mapping by service display name for clarity

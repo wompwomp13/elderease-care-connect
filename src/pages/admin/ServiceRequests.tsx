@@ -130,10 +130,15 @@ const ServiceRequests = () => {
     const start = (safePage - 1) * perPage;
     const items = requests.slice(start, start + perPage);
     const dates = Array.from(new Set(items.map((r) => Number(r.serviceDateTS)).filter((n) => Number.isFinite(n))));
+    const oneDayMs = 24 * 60 * 60 * 1000;
     const unsubs = dates.map((dayMs) => {
+      // Clear the day entry immediately to avoid stale data during reloading
+      setBusyByDate((prev) => ({ ...prev, [dayMs]: {} }));
       const q = query(collection(db, "assignments"), where("serviceDateTS", "==", dayMs));
       return onSnapshot(q, (snap) => {
         const perEmail: Record<string, Array<[number, number]>> = {};
+        // Spillover to next day for cross-midnight intervals
+        const spillToNextDay: Record<string, Array<[number, number]>> = {};
         snap.docs.forEach((d) => {
           const a = d.data() as any;
           const email = (a.volunteerEmail || "").toLowerCase();
@@ -141,12 +146,32 @@ const ServiceRequests = () => {
           const [eh, em] = String(a.endTime24 || "").split(":").map((x: string) => parseInt(x || "0", 10));
           const sMin = sh * 60 + (sm || 0);
           const eMin = eh * 60 + (em || 0);
-          if (!email || !isFinite(sMin) || !isFinite(eMin) || eMin <= sMin) return;
+          if (!email || !isFinite(sMin) || !isFinite(eMin)) return;
           if (a.status === "cancelled") return;
           if (!perEmail[email]) perEmail[email] = [];
-          perEmail[email].push([sMin, eMin]);
+          if (eMin <= sMin) {
+            // Interval crosses midnight; split and spill
+            perEmail[email].push([sMin, 24 * 60]);
+            if (!spillToNextDay[email]) spillToNextDay[email] = [];
+            if (eMin > 0) spillToNextDay[email].push([0, eMin]);
+          } else {
+            perEmail[email].push([sMin, eMin]);
+          }
         });
-        setBusyByDate((prev) => ({ ...prev, [dayMs]: perEmail }));
+        setBusyByDate((prev) => {
+          const next: typeof prev = { ...prev, [dayMs]: perEmail };
+          // Merge spillover into next day map
+          if (Object.keys(spillToNextDay).length > 0) {
+            const key = dayMs + oneDayMs;
+            const existing = next[key] || {};
+            const merged: Record<string, Array<[number, number]>> = { ...existing };
+            Object.entries(spillToNextDay).forEach(([email, arr]) => {
+              merged[email] = [...(merged[email] || []), ...arr];
+            });
+            next[key] = merged;
+          }
+          return next;
+        });
       });
     });
     return () => { unsubs.forEach((u) => u()); };
