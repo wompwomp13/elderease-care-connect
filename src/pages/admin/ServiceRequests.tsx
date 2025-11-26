@@ -41,6 +41,7 @@ const ServiceRequests = () => {
   const [assignmentByRequest, setAssignmentByRequest] = useState<Record<string, any>>({});
   const [page, setPage] = useState<number>(1);
   const perPage = 5;
+  const [busyByDate, setBusyByDate] = useState<Record<number, Record<string, Array<[number, number]>>>>({});
 
   useEffect(() => {
     const q = query(collection(db, "serviceRequests"), orderBy("createdAt", "desc"));
@@ -114,6 +115,43 @@ const ServiceRequests = () => {
     return () => unsub();
   }, []);
 
+  // Time helpers and availability map for visible dates
+  const toMinutes = (t?: string | null) => {
+    if (!t) return null;
+    const [h, m] = String(t).split(":").map((x: string) => parseInt(x || "0", 10));
+    if (!isFinite(h)) return null;
+    return h * 60 + (m || 0);
+  };
+  const hasOverlap = (aStart: number, aEnd: number, bStart: number, bEnd: number) => aStart < bEnd && bStart < aEnd;
+  useEffect(() => {
+    if (!requests || requests.length === 0) { setBusyByDate({}); return; }
+    const totalPages = Math.max(1, Math.ceil(requests.length / perPage));
+    const safePage = Math.min(page, totalPages);
+    const start = (safePage - 1) * perPage;
+    const items = requests.slice(start, start + perPage);
+    const dates = Array.from(new Set(items.map((r) => Number(r.serviceDateTS)).filter((n) => Number.isFinite(n))));
+    const unsubs = dates.map((dayMs) => {
+      const q = query(collection(db, "assignments"), where("serviceDateTS", "==", dayMs));
+      return onSnapshot(q, (snap) => {
+        const perEmail: Record<string, Array<[number, number]>> = {};
+        snap.docs.forEach((d) => {
+          const a = d.data() as any;
+          const email = (a.volunteerEmail || "").toLowerCase();
+          const [sh, sm] = String(a.startTime24 || "").split(":").map((x: string) => parseInt(x || "0", 10));
+          const [eh, em] = String(a.endTime24 || "").split(":").map((x: string) => parseInt(x || "0", 10));
+          const sMin = sh * 60 + (sm || 0);
+          const eMin = eh * 60 + (em || 0);
+          if (!email || !isFinite(sMin) || !isFinite(eMin) || eMin <= sMin) return;
+          if (a.status === "cancelled") return;
+          if (!perEmail[email]) perEmail[email] = [];
+          perEmail[email].push([sMin, eMin]);
+        });
+        setBusyByDate((prev) => ({ ...prev, [dayMs]: perEmail }));
+      });
+    });
+    return () => { unsubs.forEach((u) => u()); };
+  }, [requests, page]);
+
   const toServiceId = (nameOrId: string): "companionship" | "housekeeping" | "errands" | "visits" | "socialization" | "unknown" => {
     const v = (nameOrId || "").toLowerCase();
     if (v.includes("companionship")) return "companionship";
@@ -145,28 +183,39 @@ const ServiceRequests = () => {
     const reqServiceIds: string[] = Array.isArray(req.services)
       ? req.services.map((s: string) => toServiceId(s))
       : req.service ? [toServiceId(req.service)] : [];
-    const matched = volunteers.filter((v) => {
-      const volServiceIds: string[] = Array.isArray(v.services) ? v.services.map((s: string) => toServiceId(s)).filter((x: string) =>
-        x === "companionship" || x === "housekeeping" || x === "errands" || x === "visits"
-      ) : [];
-      return reqServiceIds.some((sid) => volServiceIds.includes(sid));
-    })
-    // Enrich with live rating data
-    .map((v) => {
+    const prefEmail = (req?.preferredVolunteerEmail || "").toLowerCase();
+    // Enrich every approved volunteer (do not filter out), compute service match count
+    const enriched = volunteers.map((v) => {
       const emailKey = (v.email || "").toLowerCase();
       const agg = ratingsMap[emailKey];
       const tasksDone = tasksMap[emailKey] ?? 0;
+      const normalizedServices = normalizeServiceLabels(v.services);
+      const volServiceIds: string[] = normalizedServices.map((s: string) => toServiceId(s));
+      const serviceMatchCount = reqServiceIds.filter((sid) => volServiceIds.includes(sid)).length;
+      const isPreferred = emailKey === prefEmail;
+      const available = isVolunteerAvailableForRequest(v, req);
       return {
         ...v,
-        // Attach normalized services for consistent UI display
-        services: normalizeServiceLabels(v.services),
+        services: normalizedServices,
         rating: agg?.avg ?? null,
         ratingCount: agg?.count ?? 0,
         tasksCompleted: tasksDone,
+        serviceMatchCount,
+        isPreferred,
+        available,
       };
     });
-    // Prioritize by rating (desc), then tasksCompleted (desc)
-    return matched.sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0) || (b.tasksCompleted ?? 0) - (a.tasksCompleted ?? 0));
+    // Sort priority: preferred desc, serviceMatchCount desc, rating desc, tasks desc, availability desc
+    return enriched.sort((a, b) => {
+      if (a.isPreferred !== b.isPreferred) return a.isPreferred ? -1 : 1;
+      if (a.serviceMatchCount !== b.serviceMatchCount) return b.serviceMatchCount - a.serviceMatchCount;
+      const ar = a.rating ?? 0, br = b.rating ?? 0;
+      if (ar !== br) return br - ar;
+      const at = a.tasksCompleted ?? 0, bt = b.tasksCompleted ?? 0;
+      if (at !== bt) return bt - at;
+      if (a.available !== b.available) return a.available ? -1 : 1;
+      return 0;
+    });
   };
 
   const chunkList = (arr: any[], size: number) => {
@@ -190,12 +239,92 @@ const ServiceRequests = () => {
 
   // Removed old static volunteers list; now using Firestore "pendingVolunteers" (approved)
 
+  // Demand-based modifier uses competing requests vs available matching volunteers in the window
+  const getDemandModifier = (req: any): { tier: "Normal" | "High" | "Peak" | "Surge"; percent: number; ratio: number } => {
+    try {
+      const day = Number(req.serviceDateTS);
+      const s = toMinutes(req.startTime24), e = toMinutes(req.endTime24);
+      if (!Number.isFinite(day) || s == null || e == null) return { tier: "Normal", percent: 0, ratio: 0 };
+      const reqServiceIds: string[] = Array.isArray(req.services)
+        ? req.services.map((x: string) => toServiceId(x))
+        : req.service ? [toServiceId(req.service)] : [];
+      const serviceMatch = (services: string[] | undefined | null) => {
+        const ids = (services || []).map((x: string) => toServiceId(x));
+        return reqServiceIds.some((id) => ids.includes(id));
+      };
+      // Available volunteers for these services at this time
+      const availableVols = (volunteers || []).filter((v) => {
+        const normalized = normalizeServiceLabels(v.services || []);
+        return serviceMatch(normalized) && isVolunteerAvailableForRequest(v, req);
+      }).length;
+      // Competing requests in the same window (pending or assigned)
+      const competing = (requests || []).filter((r) => {
+        if (r.id === req.id) return false;
+        if (Number(r.serviceDateTS) !== day) return false;
+        const rs = toMinutes(r.startTime24), re = toMinutes(r.endTime24);
+        if (rs == null || re == null) return false;
+        const st = (r.status || "pending").toLowerCase();
+        if (!(st === "pending" || st === "assigned")) return false;
+        const arr: string[] = Array.isArray(r.services) ? r.services : (r.service ? [r.service] : []);
+        if (!serviceMatch(arr)) return false;
+        return hasOverlap(s, e, rs, re);
+      }).length;
+      const ratio = availableVols > 0 ? competing / availableVols : competing >= 1 ? 2.5 : 0;
+      if (ratio >= 2.0) return { tier: "Surge", percent: 0.10, ratio };
+      if (ratio >= 1.5) return { tier: "Peak", percent: 0.06, ratio };
+      if (ratio >= 1.0) return { tier: "High", percent: 0.03, ratio };
+      return { tier: "Normal", percent: 0, ratio };
+    } catch {
+      return { tier: "Normal", percent: 0, ratio: 0 };
+    }
+  };
+
+  const isVolunteerAvailableForRequest = (vol: any, req: any): boolean => {
+    if (!req || !vol) return true;
+    const day = Number(req.serviceDateTS);
+    const s = toMinutes(req.startTime24);
+    const e = toMinutes(req.endTime24);
+    if (!Number.isFinite(day) || s == null || e == null) return true;
+    const map = busyByDate[day] || {};
+    const intervals = map[(vol.email || "").toLowerCase()] || [];
+    return !intervals.some(([bs, be]) => hasOverlap(s, e, bs, be));
+  };
+
   const handleAssign = async (requestId: string, volunteer: any) => {
     try {
-      await updateDoc(doc(db, "serviceRequests", requestId), { status: "assigned", assignedTo: volunteer.fullName });
-      // Create assignment for volunteer portal
       const req = (requests || []).find((r) => r.id === requestId);
       if (req) {
+        // Quick UI availability check
+        const uiAvailable = isVolunteerAvailableForRequest(volunteer, req);
+        if (!uiAvailable) {
+          toast({ title: "Schedule conflict", description: "This volunteer is not available for the selected time.", variant: "destructive" });
+          return;
+        }
+        // Server-side double-check
+        const aSnap = await getDocs(query(
+          collection(db, "assignments"),
+          where("volunteerEmail", "==", volunteer.email || null),
+          where("serviceDateTS", "==", Number(req.serviceDateTS) || 0)
+        ));
+        const s = toMinutes(req.startTime24), e = toMinutes(req.endTime24);
+        let conflict = false;
+        aSnap.docs.forEach((d) => {
+          const a = d.data() as any;
+          const [sh, sm] = String(a.startTime24 || "").split(":").map((x: string) => parseInt(x || "0", 10));
+          const [eh, em] = String(a.endTime24 || "").split(":").map((x: string) => parseInt(x || "0", 10));
+          const bs = sh * 60 + (sm || 0);
+          const be = eh * 60 + (em || 0);
+          if (a.status !== "cancelled" && s != null && e != null && hasOverlap(s, e, bs, be)) {
+            conflict = true;
+          }
+        });
+        if (conflict) {
+          toast({ title: "Schedule conflict", description: "This volunteer has another assignment at that time.", variant: "destructive" });
+          return;
+        }
+
+        await updateDoc(doc(db, "serviceRequests", requestId), { status: "assigned", assignedTo: volunteer.fullName });
+        // Create assignment for volunteer portal
         let volunteerUid: string | null = null;
         try {
           if (volunteer.email) {
@@ -209,13 +338,15 @@ const ServiceRequests = () => {
         const ratingAgg = ratingsMap[emailKey];
         const tasksDone = tasksMap[emailKey] ?? 0;
         const { tier, percent } = getDynamicAdjustment(tasksDone, ratingAgg?.avg);
+        const demand = getDemandModifier(req);
+        const combinedPercent = percent + (demand.percent || 0);
 
         const perServiceHoursByName: Record<string, number> = (req.perServiceHoursByName && typeof req.perServiceHoursByName === "object") ? req.perServiceHoursByName : {};
         const selectedServices: string[] = Array.isArray(req.services) ? req.services : (req.service ? [req.service] : []);
         const lineItems = selectedServices.map((name: string) => {
           const baseRate = SERVICE_RATES[name] ?? 0;
           const hours = Math.max(0, Number(perServiceHoursByName?.[name] ?? 0));
-          const adjustedRate = baseRate * (1 + percent);
+          const adjustedRate = baseRate * (1 + combinedPercent);
           const amount = adjustedRate * hours;
           return { name, baseRate, hours, adjustedRate, amount };
         }).filter((li) => li.hours > 0);
@@ -247,7 +378,14 @@ const ServiceRequests = () => {
             subtotal,
             commission,
             total,
-            dynamicPricing: { tier, percent },
+            dynamicPricing: {
+              tier, // performance tier
+              percent: combinedPercent,
+              components: {
+                performance: { tier, percent },
+                demand,
+              },
+            },
           },
           receiptIssuedAt: serverTimestamp(),
           status: "assigned",
@@ -267,6 +405,8 @@ const ServiceRequests = () => {
         return <Badge className="bg-green-500">Assigned</Badge>;
       case "completed":
         return <Badge className="bg-blue-500">Completed</Badge>;
+      case "cancelled":
+        return <Badge className="bg-red-500">Cancelled</Badge>;
       default:
         return <Badge variant="secondary">Pending</Badge>;
     }
@@ -342,10 +482,44 @@ const ServiceRequests = () => {
                         <span className="text-sm font-medium">{request.assignedTo}</span>
                       </div>
                     )}
+                    {request.preferredVolunteerName && (
+                      <div className="flex items-center gap-2">
+                        <User className="h-4 w-4 text-muted-foreground" />
+                        <span className="text-sm">Preferred by guardian: <span className="font-medium">{request.preferredVolunteerName}</span></span>
+                      </div>
+                    )}
                     <div>
                       <p className="text-sm font-medium mb-1">Additional Notes</p>
                       <p className="text-sm text-muted-foreground">{request.notes || "—"}</p>
                     </div>
+                  {request.status === "cancelled" && (
+                    <div className="rounded-lg border p-3 bg-red-50 dark:bg-red-500/10">
+                      <p className="text-sm font-medium mb-1">Cancellation</p>
+                      <div className="text-xs text-muted-foreground space-y-1">
+                        <div className="flex items-center justify-between">
+                          <span>Reason</span>
+                          <span className="font-medium">
+                            {(() => {
+                              const map: Record<string, string> = {
+                                schedule_change: "Schedule changed",
+                                price_high: "Price is too high",
+                                preferred_unavailable: "Preferred volunteer unavailable",
+                                entered_wrong_info: "Entered wrong information",
+                                other: "Other",
+                              };
+                              return map[request.cancelReasonCode] || "—";
+                            })()}
+                          </span>
+                        </div>
+                        {!!request.cancelReasonText && (
+                          <div className="flex items-start justify-between gap-2">
+                            <span>Comment</span>
+                            <span className="font-medium text-right">{request.cancelReasonText}</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
                     {request.status === "assigned" && assignmentByRequest[request.id]?.receipt && (
                       <div className="rounded-lg border p-3 bg-muted/30">
                         <p className="text-sm font-medium mb-1">Dynamic Pricing</p>
@@ -374,6 +548,26 @@ const ServiceRequests = () => {
                               <DialogTitle>Pricing Details</DialogTitle>
                             </DialogHeader>
                             <div className="space-y-2 text-sm">
+                              {(() => {
+                                const dp = assignmentByRequest[request.id].receipt.dynamicPricing || {};
+                                const perf = dp.components?.performance;
+                                const dem = dp.components?.demand;
+                                const pct = (n: number | undefined) => `${Math.round((n ?? 0) * 100)}%`;
+                                return (
+                                  <div className="rounded-lg border p-2 bg-muted/40 mb-2">
+                                    <div className="flex items-center justify-between">
+                                      <span className="text-muted-foreground">Performance tier</span>
+                                      <span className="font-medium">{perf?.tier || dp.tier} • {pct(perf?.percent ?? dp.percent)}</span>
+                                    </div>
+                                    {dem && (
+                                      <div className="flex items-center justify-between">
+                                        <span className="text-muted-foreground">Demand modifier</span>
+                                        <span className="font-medium">{dem.tier} • {pct(dem.percent)} {typeof dem.ratio === "number" ? `(ratio ${dem.ratio.toFixed(2)})` : ""}</span>
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })()}
                               {(assignmentByRequest[request.id].receipt.lineItems || []).map((li: any) => (
                                 <div key={li.name} className="flex items-center justify-between">
                                   <span className="text-muted-foreground">
@@ -430,6 +624,7 @@ const ServiceRequests = () => {
                                         : request.service ? [toServiceId(request.service)] : [];
                                       const matches = reqServiceIds.filter((id: string) => volServiceIds.includes(id));
                                       const matchPct = reqServiceIds.length ? Math.round((matches.length / reqServiceIds.length) * 100) : 0;
+                                      const preferred = ((v.email || "").toLowerCase() === (request?.preferredVolunteerEmail || "").toLowerCase());
                                       return (
                                         <div key={v.id} className="rounded-2xl border bg-card/70 backdrop-blur shadow-sm hover:shadow-md transition-shadow overflow-hidden select-none">
                                           <div className="p-5 cursor-grab active:cursor-grabbing">
@@ -439,7 +634,10 @@ const ServiceRequests = () => {
                                                   <User className="h-6 w-6 text-muted-foreground" />
                                                 </div>
                                                 <div className="min-w-0">
-                                                  <p className="font-semibold leading-tight truncate">{v.fullName}</p>
+                                                  <p className="font-semibold leading-tight truncate">
+                                                    {v.fullName}
+                                                    {preferred && <span className="ml-2 align-middle text-[10px] font-semibold px-2 py-0.5 rounded-full bg-primary/10 text-primary">Preferred</span>}
+                                                  </p>
                                                   <p className="text-[10px] uppercase tracking-wider text-primary/70 font-medium">Volunteer</p>
                                                 </div>
                                               </div>
@@ -471,6 +669,9 @@ const ServiceRequests = () => {
                                               </div>
                                               <span className="inline-block h-1 w-1 rounded-full bg-muted-foreground/50" />
                                               <span>{matchPct}% match • {matches.map((m) => m[0]?.toUpperCase() + m.slice(1)).join(", ") || "No match"}</span>
+                                              <span className={`ml-auto ${isVolunteerAvailableForRequest(v, request) ? "text-emerald-600" : "text-destructive"}`}>
+                                                {isVolunteerAvailableForRequest(v, request) ? "Available" : "Conflict"}
+                                              </span>
                                             </div>
                                           </div>
                                           <div className="flex items-center justify-between px-5 py-3 bg-muted/30 cursor-default select-auto">
@@ -507,6 +708,9 @@ const ServiceRequests = () => {
                                                       ))}
                                                     </div>
                                                   </div>
+                                                  <div className={`font-medium ${isVolunteerAvailableForRequest(v, request) ? "text-emerald-600" : "text-destructive"}`}>
+                                                    Availability: {isVolunteerAvailableForRequest(v, request) ? "Available" : "Conflict at selected time"}
+                                                  </div>
                                                   {v.bio && (
                                                     <div>
                                                       <p className="font-medium text-foreground mb-1">About</p>
@@ -516,7 +720,9 @@ const ServiceRequests = () => {
                                                 </div>
                                               </DialogContent>
                                             </Dialog>
-                                            <Button onClick={() => handleAssign(request.id, v)}>Assign</Button>
+                                            <Button onClick={() => handleAssign(request.id, v)} disabled={!isVolunteerAvailableForRequest(v, request)} aria-disabled={!isVolunteerAvailableForRequest(v, request)}>
+                                              {isVolunteerAvailableForRequest(v, request) ? "Assign" : "Unavailable"}
+                                            </Button>
                     </div>
                                         </div>
                                       );

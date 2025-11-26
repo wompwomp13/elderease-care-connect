@@ -135,7 +135,12 @@ const CompanionHome = () => {
             </div>
             <div className="relative">
               <div className="absolute inset-0 bg-gradient-to-br from-primary/20 to-transparent rounded-3xl blur-3xl"></div>
-              <img src={volunteerHero} alt="Volunteers" className="relative rounded-3xl shadow-2xl w-full h-auto" />
+              <img
+                src="/companion-hero.jpg"
+                onError={(e) => { (e.currentTarget as HTMLImageElement).src = volunteerHero; }}
+                alt="Volunteers"
+                className="relative rounded-3xl shadow-2xl w-full h-auto"
+              />
             </div>
           </div>
         </div>
@@ -278,7 +283,7 @@ const CompanionHome = () => {
                 <TrendingUp className="h-5 w-5 text-primary" />
                 <h2 className="text-lg font-bold">Dynamic Pricing</h2>
               </div>
-              <p className="text-sm text-muted-foreground mb-3">Fair rate boosts based on your service record and ratings.</p>
+              <p className="text-sm text-muted-foreground mb-3">Fair rate boosts based on your service record, ratings, and current demand.</p>
               <div className="space-y-3">
                 <div className="rounded-xl border p-3">
                   <div className="flex items-center justify-between">
@@ -309,7 +314,17 @@ const CompanionHome = () => {
                   <p className="text-xs text-muted-foreground mt-0.5">40+ services • avg rating ≥ 4.6</p>
                 </div>
               </div>
-              <p className="text-xs text-muted-foreground mt-3">These adjustments apply to the base hourly rate.</p>
+              <div className="mt-4 rounded-xl border p-3 bg-muted/40">
+                <div className="font-medium mb-1">Demand-based Modifier</div>
+                <div className="grid gap-1 text-xs">
+                  <div className="flex items-center justify-between"><span className="text-muted-foreground">Normal</span><span className="font-medium">+0%</span></div>
+                  <div className="flex items-center justify-between"><span className="text-muted-foreground">High (≥1.0 requests per available volunteer)</span><span className="font-medium">+3%</span></div>
+                  <div className="flex items-center justify-between"><span className="text-muted-foreground">Peak (≥1.5)</span><span className="font-medium">+6%</span></div>
+                  <div className="flex items-center justify-between"><span className="text-muted-foreground">Surge (≥2.0)</span><span className="font-medium">+10%</span></div>
+                </div>
+                <p className="text-[10px] text-muted-foreground mt-1">Demand = competing requests ÷ available matching volunteers for the time window.</p>
+              </div>
+              <p className="text-xs text-muted-foreground mt-3">Performance tier and demand modifier stack on the base hourly rate.</p>
             </div>
           </div>
         </div>

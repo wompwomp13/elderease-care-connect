@@ -87,6 +87,16 @@ const Dashboard = () => {
   const totalRequests = requests?.length ?? 0;
   const pendingRequests = (requests || []).filter((r) => (r.status || "pending") === "pending").length;
   const activeVolunteers = approvedVolunteers?.length ?? 0;
+  const cancelledRequests = (requests || []).filter((r) => r.status === "cancelled").length;
+  const cancelReasons = useMemo(() => {
+    const map: Record<string, number> = {};
+    (requests || []).forEach((r) => {
+      if (r.status !== "cancelled") return;
+      const code = r.cancelReasonCode || "other";
+      map[code] = (map[code] || 0) + 1;
+    });
+    return map;
+  }, [requests]);
 
   const now = new Date();
   const weekAgoMs = now.getTime() - 6 * 24 * 60 * 60 * 1000;
@@ -229,52 +239,7 @@ const Dashboard = () => {
           <p className="text-muted-foreground">Monitor system performance and key metrics</p>
         </div>
 
-      {/* Dynamic Pricing */}
-      <Card className="shadow-lg border-0">
-        <CardHeader>
-          <CardTitle className="text-lg">Dynamic Pricing</CardTitle>
-          <p className="text-sm text-muted-foreground">
-            Clear, fair adjustments based on volunteer performance and ratings.
-          </p>
-        </CardHeader>
-        <CardContent>
-          <div className="grid sm:grid-cols-2 gap-4">
-            <div className="rounded-xl border p-4 bg-muted/40">
-              <div className="flex items-center justify-between mb-1">
-                <span className="font-medium">Associate</span>
-                <span className="text-xs px-2 py-0.5 rounded-full bg-muted text-foreground">Base rate</span>
-              </div>
-              <p className="text-xs text-muted-foreground">0–4 services • any rating</p>
-              <p className="text-sm mt-1">Early-stage contributor building experience.</p>
-            </div>
-            <div className="rounded-xl border p-4 bg-emerald-50/60 dark:bg-emerald-500/5">
-              <div className="flex items-center justify-between mb-1">
-                <span className="font-medium">Proficient</span>
-                <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-700 dark:text-emerald-400">+5%</span>
-              </div>
-              <p className="text-xs text-muted-foreground">5–19 services • avg rating ≥ 4.2</p>
-              <p className="text-sm mt-1">Consistent performance with strong feedback.</p>
-            </div>
-            <div className="rounded-xl border p-4 bg-blue-50/60 dark:bg-blue-500/5">
-              <div className="flex items-center justify-between mb-1">
-                <span className="font-medium">Advanced</span>
-                <span className="text-xs px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-700 dark:text-blue-400">+8%</span>
-              </div>
-              <p className="text-xs text-muted-foreground">20–39 services • avg rating ≥ 4.4</p>
-              <p className="text-sm mt-1">Proven track record handling requests well.</p>
-            </div>
-            <div className="rounded-xl border p-4 bg-amber-50/60 dark:bg-amber-500/5">
-              <div className="flex items-center justify-between mb-1">
-                <span className="font-medium">Expert</span>
-                <span className="text-xs px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-700 dark:text-amber-400">+12%</span>
-              </div>
-              <p className="text-xs text-muted-foreground">40+ services • avg rating ≥ 4.6</p>
-              <p className="text-sm mt-1">Excellent service history and high ratings.</p>
-            </div>
-          </div>
-          <p className="text-xs text-muted-foreground mt-3">These adjustments apply to the base hourly rate.</p>
-        </CardContent>
-      </Card>
+      {/* Dynamic Pricing moved to end */}
         {/* Stats Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           {stats.map((stat) => (
@@ -304,23 +269,27 @@ const Dashboard = () => {
           ))}
         </div>
 
-        {/* Form Completion Time */}
+        {/* Most Requested Services */}
         <Card className="shadow-lg border-0">
           <CardHeader>
-            <CardTitle className="text-lg">Form Completion Time</CardTitle>
-            <p className="text-sm text-muted-foreground">Average time to complete forms</p>
+            <CardTitle className="text-lg">Most Requested Services</CardTitle>
+            <p className="text-sm text-muted-foreground">Distribution of service types</p>
           </CardHeader>
-          <CardContent>
-            <div className="grid sm:grid-cols-2 gap-4">
-              <div className="rounded-xl border p-4 bg-muted/40">
-                <div className="text-xs text-muted-foreground mb-1">Guardians / Elders</div>
-                <div className="text-2xl font-bold">{formatDuration(avgElderMs)}</div>
+          <CardContent className="space-y-4">
+            {topServices.map((service) => (
+              <div key={service.name} className="space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span className="font-medium">{service.name}</span>
+                  <span className="text-muted-foreground">{service.requests} requests</span>
+                </div>
+                <div className="w-full bg-muted rounded-full h-2.5">
+                  <div
+                    className="bg-gradient-to-r from-primary to-primary-dark rounded-full h-2.5 transition-all"
+                    style={{ width: `${service.percentage}%` }}
+                  />
+                </div>
               </div>
-              <div className="rounded-xl border p-4 bg-muted/40">
-                <div className="text-xs text-muted-foreground mb-1">Volunteers</div>
-                <div className="text-2xl font-bold">{formatDuration(avgVolunteerMs)}</div>
-              </div>
-            </div>
+            ))}
           </CardContent>
         </Card>
 
@@ -381,6 +350,26 @@ const Dashboard = () => {
             </CardContent>
           </Card>
         </div>
+
+        {/* Form Completion Time (moved here) */}
+        <Card className="shadow-lg border-0">
+          <CardHeader>
+            <CardTitle className="text-lg">Form Completion Time</CardTitle>
+            <p className="text-sm text-muted-foreground">Average time to complete forms</p>
+          </CardHeader>
+          <CardContent>
+            <div className="grid sm:grid-cols-2 gap-4">
+              <div className="rounded-xl border p-4 bg-muted/40">
+                <div className="text-xs text-muted-foreground mb-1">Guardians / Elders</div>
+                <div className="text-2xl font-bold">{formatDuration(avgElderMs)}</div>
+              </div>
+              <div className="rounded-xl border p-4 bg-muted/40">
+                <div className="text-xs text-muted-foreground mb-1">Volunteers</div>
+                <div className="text-2xl font-bold">{formatDuration(avgVolunteerMs)}</div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
 
         {/* Top Volunteers Section */}
         <div>
@@ -508,27 +497,96 @@ const Dashboard = () => {
           </div>
         </div>
 
-        {/* Most Requested Services */}
+        {/* Cancellations (moved here) */}
         <Card className="shadow-lg border-0">
           <CardHeader>
-            <CardTitle className="text-lg">Most Requested Services</CardTitle>
-            <p className="text-sm text-muted-foreground">Distribution of service types</p>
+            <CardTitle className="text-lg">Cancellations</CardTitle>
+            <p className="text-sm text-muted-foreground">Guardian-initiated cancellations and reasons</p>
           </CardHeader>
-          <CardContent className="space-y-4">
-            {topServices.map((service) => (
-              <div key={service.name} className="space-y-2">
-                <div className="flex justify-between text-sm">
-                  <span className="font-medium">{service.name}</span>
-                  <span className="text-muted-foreground">{service.requests} requests</span>
-                </div>
-                <div className="w-full bg-muted rounded-full h-2.5">
-                  <div
-                    className="bg-gradient-to-r from-primary to-primary-dark rounded-full h-2.5 transition-all"
-                    style={{ width: `${service.percentage}%` }}
-                  />
+          <CardContent>
+            <div className="grid sm:grid-cols-3 gap-4">
+              <div className="rounded-xl border p-4 bg-red-50/60 dark:bg-red-500/5">
+                <div className="text-xs text-muted-foreground mb-1">Total cancelled</div>
+                <div className="text-2xl font-bold">{cancelledRequests}</div>
+              </div>
+              <div className="sm:col-span-2 rounded-xl border p-4 bg-muted/40">
+                <div className="text-xs text-muted-foreground mb-2">Top reasons</div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
+                  {Object.entries(cancelReasons).length === 0 ? (
+                    <div className="text-muted-foreground text-sm">No cancellations yet.</div>
+                  ) : (
+                    Object.entries(cancelReasons)
+                      .sort((a, b) => b[1] - a[1])
+                      .slice(0, 4)
+                      .map(([code, count]) => (
+                        <div key={code} className="flex items-center justify-between">
+                          <span className="text-muted-foreground">
+                            {({ schedule_change: "Schedule changed", price_high: "Price too high", preferred_unavailable: "Preferred volunteer unavailable", entered_wrong_info: "Entered wrong information", other: "Other" } as Record<string,string>)[code] || code}
+                          </span>
+                          <span className="font-medium">{count}</span>
+                        </div>
+                      ))
+                  )}
                 </div>
               </div>
-            ))}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Dynamic Pricing (moved to end) */}
+        <Card className="shadow-lg border-0">
+          <CardHeader>
+            <CardTitle className="text-lg">Dynamic Pricing</CardTitle>
+            <p className="text-sm text-muted-foreground">
+              Clear, fair adjustments based on volunteer performance, ratings, and current demand.
+            </p>
+          </CardHeader>
+          <CardContent>
+            <div className="grid sm:grid-cols-2 gap-4">
+              <div className="rounded-xl border p-4 bg-muted/40">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="font-medium">Associate</span>
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-muted text-foreground">Base rate</span>
+                </div>
+                <p className="text-xs text-muted-foreground">0–4 services • any rating</p>
+                <p className="text-sm mt-1">Early-stage contributor building experience.</p>
+              </div>
+              <div className="rounded-xl border p-4 bg-emerald-50/60 dark:bg-emerald-500/5">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="font-medium">Proficient</span>
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-700 dark:text-emerald-400">+5%</span>
+                </div>
+                <p className="text-xs text-muted-foreground">5–19 services • avg rating ≥ 4.2</p>
+                <p className="text-sm mt-1">Consistent performance with strong feedback.</p>
+              </div>
+              <div className="rounded-xl border p-4 bg-blue-50/60 dark:bg-blue-500/5">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="font-medium">Advanced</span>
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-700 dark:text-blue-400">+8%</span>
+                </div>
+                <p className="text-xs text-muted-foreground">20–39 services • avg rating ≥ 4.4</p>
+                <p className="text-sm mt-1">Proven track record handling requests well.</p>
+              </div>
+              <div className="rounded-xl border p-4 bg-amber-50/60 dark:bg-amber-500/5">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="font-medium">Expert</span>
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-700 dark:text-amber-400">+12%</span>
+                </div>
+                <p className="text-xs text-muted-foreground">40+ services • avg rating ≥ 4.6</p>
+                <p className="text-sm mt-1">Excellent service history and high ratings.</p>
+              </div>
+            </div>
+            <div className="mt-4 rounded-xl border p-4 bg-muted/40">
+              <div className="font-medium mb-1">Demand-based Modifier</div>
+              <div className="grid sm:grid-cols-2 gap-2 text-sm">
+                <div className="flex items-center justify-between"><span className="text-muted-foreground">Normal</span><span className="font-medium">+0%</span></div>
+                <div className="flex items-center justify-between"><span className="text-muted-foreground">High (≥1.0 requests per available volunteer)</span><span className="font-medium">+3%</span></div>
+                <div className="flex items-center justify-between"><span className="text-muted-foreground">Peak (≥1.5)</span><span className="font-medium">+6%</span></div>
+                <div className="flex items-center justify-between"><span className="text-muted-foreground">Surge (≥2.0)</span><span className="font-medium">+10%</span></div>
+              </div>
+              <p className="text-xs text-muted-foreground mt-2">Demand is calculated per time window: competing requests ÷ available matching volunteers.</p>
+            </div>
+            <p className="text-xs text-muted-foreground mt-3">Performance tier and demand modifier stack; the combined percentage applies to the base hourly rate.</p>
           </CardContent>
         </Card>
       </div>

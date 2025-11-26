@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import { getCurrentUser, logout } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
@@ -16,7 +16,7 @@ import TimeRangePicker from "@/components/ui/time-range-picker";
 import ElderChatbot from "@/components/elder/ElderChatbot";
 import { format12h, isEndAfterStart } from "@/lib/time";
 import { db } from "@/lib/firebase";
-import { addDoc, collection, serverTimestamp } from "firebase/firestore";
+import { addDoc, collection, onSnapshot, query, serverTimestamp, where } from "firebase/firestore";
 
 const ElderNavbar = () => {
   const user = getCurrentUser();
@@ -108,6 +108,14 @@ const RequestService = () => {
   const formStartRef = useRef<number | null>(null);
   const markFormStarted = () => { if (!formStartRef.current) formStartRef.current = Date.now(); };
 
+  // Preferred volunteer selection and availability
+  const [volunteers, setVolunteers] = useState<any[] | null>(null);
+  const [ratingsMap, setRatingsMap] = useState<Record<string, { avg: number; count: number }>>({});
+  const [tasksMap, setTasksMap] = useState<Record<string, number>>({});
+  const [preferredVolunteerEmail, setPreferredVolunteerEmail] = useState<string | null>(null);
+  const [preferredVolunteerName, setPreferredVolunteerName] = useState<string | null>(null);
+  const [busyByEmail, setBusyByEmail] = useState<Record<string, Array<[number, number]>>>({}); // for selected date only
+
   const getTotalSelectedHours = (): number => {
     return selectedServices.reduce((sum, id) => sum + (Number(serviceHoursById[id]) || 0), 0);
   };
@@ -154,6 +162,119 @@ const RequestService = () => {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [startTime, selectedServices, serviceHoursById]);
+
+  // Subscribe to approved volunteers (for selection list)
+  useEffect(() => {
+    const q = query(collection(db, "pendingVolunteers"), where("status", "==", "approved"));
+    const unsub = onSnapshot(q, (snap) => {
+      setVolunteers(snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })));
+    });
+    return () => unsub();
+  }, []);
+
+  // Live ratings aggregation (by volunteer email)
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, "ratings"), (snap) => {
+      const sums: Record<string, { sum: number; count: number }> = {};
+      snap.docs.forEach((doc) => {
+        const r = doc.data() as any;
+        const email = (r.volunteerEmail || "").toLowerCase();
+        const value = Number(r.rating) || 0;
+        if (!email || value <= 0) return;
+        if (!sums[email]) sums[email] = { sum: 0, count: 0 };
+        sums[email].sum += value;
+        sums[email].count += 1;
+      });
+      const avg: Record<string, { avg: number; count: number }> = {};
+      Object.keys(sums).forEach((email) => {
+        const { sum, count } = sums[email];
+        avg[email] = { avg: sum / count, count };
+      });
+      setRatingsMap(avg);
+    });
+    return () => unsub();
+  }, []);
+
+  // Tasks completed aggregation (by volunteer email)
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, "assignments"), (snap) => {
+      const counts: Record<string, number> = {};
+      snap.docs.forEach((d) => {
+        const a = d.data() as any;
+        const email = (a.volunteerEmail || "").toLowerCase();
+        if (!email) return;
+        const isCompleted = a.status === "completed";
+        const confirmed = a.guardianConfirmed === true;
+        if (isCompleted && confirmed) {
+          counts[email] = (counts[email] || 0) + 1;
+        }
+      });
+      setTasksMap(counts);
+    });
+    return () => unsub();
+  }, []);
+
+  // For selected date, compute busy intervals by volunteer email
+  useEffect(() => {
+    if (!selectedDate) { setBusyByEmail({}); return; }
+    const dayMs = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate()).getTime();
+    const q = query(collection(db, "assignments"), where("serviceDateTS", "==", dayMs));
+    const unsub = onSnapshot(q, (snap) => {
+      const map: Record<string, Array<[number, number]>> = {};
+      snap.docs.forEach((d) => {
+        const a = d.data() as any;
+        const email = (a.volunteerEmail || "").toLowerCase();
+        const [sh, sm] = String(a.startTime24 || "").split(":").map((x: string) => parseInt(x || "0", 10));
+        const [eh, em] = String(a.endTime24 || "").split(":").map((x: string) => parseInt(x || "0", 10));
+        const startMin = sh * 60 + (sm || 0);
+        const endMin = eh * 60 + (em || 0);
+        if (!email || !isFinite(startMin) || !isFinite(endMin) || endMin <= startMin) return;
+        if (a.status === "cancelled") return;
+        if (!map[email]) map[email] = [];
+        map[email].push([startMin, endMin]);
+      });
+      setBusyByEmail(map);
+    });
+    return () => unsub();
+  }, [selectedDate]);
+
+  const toMinutes = (t?: string | null) => {
+    if (!t) return null;
+    const [h, m] = String(t).split(":").map((x: string) => parseInt(x || "0", 10));
+    if (!isFinite(h)) return null;
+    return h * 60 + (m || 0);
+  };
+  const hasOverlap = (aStart: number, aEnd: number, bStart: number, bEnd: number) => aStart < bEnd && bStart < aEnd;
+
+  const enrichedVolunteers = useMemo(() => {
+    const list = volunteers || [];
+    const rs = toMinutes(startTime);
+    const re = toMinutes(endTime);
+    return list.map((v) => {
+      const email = (v.email || "").toLowerCase();
+      const ratingAgg = ratingsMap[email];
+      const tasksDone = tasksMap[email] ?? 0;
+      const intervals = busyByEmail[email] || [];
+      let available: boolean | null = null;
+      if (rs != null && re != null) {
+        available = !intervals.some(([bs, be]) => hasOverlap(rs, re, bs, be));
+      }
+      return {
+        ...v,
+        rating: ratingAgg?.avg ?? null,
+        ratingCount: ratingAgg?.count ?? 0,
+        tasksCompleted: tasksDone,
+        available,
+      };
+    })
+    // Optional: sort available first if we know availability
+    .sort((a, b) => {
+      if (a.available === b.available) return 0;
+      if (a.available === true) return -1;
+      if (b.available === true) return 1;
+      return 0;
+    });
+  }, [volunteers, ratingsMap, tasksMap, busyByEmail, startTime, endTime]);
 
   const handleSubmit = () => {
     setServicesError(null);
@@ -206,6 +327,8 @@ const RequestService = () => {
     });
     const currentUser = user;
     const elderName = [familyName.trim(), firstName.trim(), middleName.trim()].filter(Boolean).join(", ");
+    // Normalize date to midnight for consistent availability queries
+    const serviceDayMs = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate()).getTime();
     const payload = {
       userId: currentUser?.id ?? null,
       elderName, // keep for backward compatibility
@@ -218,12 +341,14 @@ const RequestService = () => {
       services: serviceNames,
       perServiceHoursByName,
       serviceDateDisplay: format(selectedDate, "PPP"),
-      serviceDateTS: selectedDate.getTime(),
+      serviceDateTS: serviceDayMs,
       startTime24: startTime,
       endTime24: endTime,
       startTimeText: format12h(startTime),
       endTimeText: format12h(endTime),
       notes: additionalNotes.trim() || null,
+      preferredVolunteerEmail: preferredVolunteerEmail || null,
+      preferredVolunteerName: preferredVolunteerName || null,
       status: "pending",
       createdAt: serverTimestamp(),
     };
@@ -467,6 +592,80 @@ const RequestService = () => {
                   End time is automatically calculated from the total selected service hours.
                 </p>
                 {timeError && <p className="mt-2 text-sm text-destructive">{timeError}</p>}
+              </CardContent>
+            </Card>
+
+            {/* Preferred Volunteer */}
+            <Card onFocusCapture={markFormStarted}>
+              <CardHeader>
+                <CardTitle>4) Preferred Volunteer (optional)</CardTitle>
+                <CardDescription>Select someone you prefer. Availability shows after choosing date & time.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {(() => {
+                  const selected = enrichedVolunteers.find((x) => (x.email || "").toLowerCase() === (preferredVolunteerEmail || ""));
+                  const selectedLabel = selected
+                    ? `${selected.fullName || selected.email}`
+                    : "";
+                  return (
+                    <div className="space-y-2">
+                      <Label className="text-sm mb-1 block">Preferred Volunteer</Label>
+                      <Select
+                        value={preferredVolunteerEmail || ""}
+                        onValueChange={(val) => {
+                          setPreferredVolunteerEmail(val || null);
+                          const v = enrichedVolunteers.find((x) => (x.email || "").toLowerCase() === val);
+                          setPreferredVolunteerName(v?.fullName || null);
+                        }}
+                      >
+                        <SelectTrigger className="h-11">
+                          <span className="truncate">
+                            {selected ? selectedLabel : (enrichedVolunteers.length ? "Choose a volunteer" : "Loading volunteers...")}
+                          </span>
+                        </SelectTrigger>
+                        <SelectContent className="max-h-96 p-0">
+                          {enrichedVolunteers.map((v) => {
+                            const email = (v.email || "").toLowerCase();
+                            const rating = typeof v.rating === "number" ? v.rating.toFixed(1) : "—";
+                            const tasks = v.tasksCompleted ?? 0;
+                            const availabilityLabel = v.available == null ? "Pick date & time to check" : (v.available ? "Available" : "Unavailable");
+                            return (
+                              <SelectItem key={email} value={email} className="py-2">
+                                <div className="flex flex-col gap-0.5">
+                                  <span className="font-medium leading-tight">{v.fullName || v.email}</span>
+                                  {v.email && <span className="text-xs text-muted-foreground">{v.email}</span>}
+                                  <div className="text-xs text-muted-foreground">
+                                    Rating: {rating} • Tasks: {tasks}
+                                  </div>
+                                  <div className={`text-xs ${v.available === false ? "text-destructive" : "text-emerald-600"}`}>
+                                    {availabilityLabel}
+                                  </div>
+                                </div>
+                              </SelectItem>
+                            );
+                          })}
+                        </SelectContent>
+                      </Select>
+
+                      {selected && (
+                        <div className="rounded-lg border bg-muted/40 p-3">
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <p className="font-medium leading-tight">{selected.fullName || selected.email}</p>
+                              {selected.email && <p className="text-xs text-muted-foreground">{selected.email}</p>}
+                            </div>
+                            <span className={`text-xs px-2 py-1 rounded-full ${selected.available === false ? "bg-destructive/10 text-destructive" : "bg-emerald-500/10 text-emerald-700"}`}>
+                              {selected.available == null ? "Pick date & time" : selected.available ? "Available" : "Unavailable"}
+                            </span>
+                          </div>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            Rating: {typeof selected.rating === "number" ? selected.rating.toFixed(1) : "—"} • Tasks: {selected.tasksCompleted ?? 0}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
               </CardContent>
             </Card>
 
