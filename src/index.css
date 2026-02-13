@@ -66,6 +66,51 @@ All colors MUST be HSL.
     --sidebar-ring: 217.2 91.2% 59.8%;
   }
 
+  /* Admin theme: 2F86A8, 4AAFD5, 7CC6E3 */
+  [data-theme="admin"] {
+    --primary: 198 63% 56%;
+    --primary-foreground: 0 0% 100%;
+    --primary-dark: 198 56% 42%;
+    --primary-dark-foreground: 0 0% 100%;
+    --ring: 198 63% 56%;
+    --sidebar-primary: 198 56% 42%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-ring: 198 63% 56%;
+    --gradient-hero: linear-gradient(135deg, hsl(198 63% 69%) 0%, hsl(198 63% 56%) 50%, hsl(198 56% 42%) 100%);
+    --shadow-card: 0 4px 20px -2px hsl(198 63% 56% / 0.15);
+    --shadow-hover: 0 8px 30px -4px hsl(198 63% 56% / 0.25);
+  }
+
+  /* Guardian (elder) theme: 6F8F66, 91B187, B7CDB0 */
+  [data-theme="guardian"] {
+    --primary: 106 21% 61%;
+    --primary-foreground: 0 0% 100%;
+    --primary-dark: 106 17% 48%;
+    --primary-dark-foreground: 0 0% 100%;
+    --ring: 106 21% 61%;
+    --sidebar-primary: 106 17% 48%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-ring: 106 21% 61%;
+    --gradient-hero: linear-gradient(135deg, hsl(106 25% 75%) 0%, hsl(106 21% 61%) 50%, hsl(106 17% 48%) 100%);
+    --shadow-card: 0 4px 20px -2px hsl(106 21% 61% / 0.15);
+    --shadow-hover: 0 8px 30px -4px hsl(106 21% 61% / 0.25);
+  }
+
+  /* Volunteer (companion) theme: F0C06B, E7A339, B77A1F */
+  [data-theme="volunteer"] {
+    --primary: 36 79% 56%;
+    --primary-foreground: 0 0% 100%;
+    --primary-dark: 35 71% 42%;
+    --primary-dark-foreground: 0 0% 100%;
+    --ring: 36 79% 56%;
+    --sidebar-primary: 35 71% 42%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-ring: 36 79% 56%;
+    --gradient-hero: linear-gradient(135deg, hsl(39 81% 68%) 0%, hsl(36 79% 56%) 50%, hsl(35 71% 42%) 100%);
+    --shadow-card: 0 4px 20px -2px hsl(36 79% 56% / 0.15);
+    --shadow-hover: 0 8px 30px -4px hsl(36 79% 56% / 0.25);
+  }
+
   .dark {
     --background: 222.2 84% 4.9%;
     --foreground: 210 40% 98%;

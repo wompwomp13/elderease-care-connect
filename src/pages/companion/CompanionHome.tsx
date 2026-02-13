@@ -160,20 +160,20 @@ const CompanionHome = () => {
             <p className="text-2xl font-bold">Available</p>
           </div>
 
-          <div className="bg-gradient-to-br from-blue-500/10 to-blue-500/5 p-6 rounded-2xl border border-blue-500/20">
+          <div className="bg-gradient-to-br from-primary/10 to-primary/5 p-6 rounded-2xl border border-primary/20">
             <div className="flex items-start justify-between mb-4">
-              <div className="p-3 bg-blue-500/10 rounded-xl">
+              <div className="p-3 bg-primary/10 rounded-xl">
                 <Calendar className="h-6 w-6 text-blue-600" />
               </div>
-              <span className="text-xs font-medium text-blue-600 bg-blue-500/10 px-2 py-1 rounded-full">This Week</span>
+              <span className="text-xs font-medium text-primary bg-primary/10 px-2 py-1 rounded-full">This Week</span>
             </div>
             <h3 className="text-sm text-muted-foreground mb-1">Upcoming Visits</h3>
             <p className="text-2xl font-bold">{weekAssignments.length}</p>
           </div>
 
-          <div className="bg-gradient-to-br from-green-500/10 to-green-500/5 p-6 rounded-2xl border border-green-500/20">
+          <div className="bg-gradient-to-br from-primary/10 to-primary/5 p-6 rounded-2xl border border-primary/20">
             <div className="flex items-start justify-between mb-4">
-              <div className="p-3 bg-green-500/10 rounded-xl">
+              <div className="p-3 bg-primary/10 rounded-xl">
                 <Clock className="h-6 w-6 text-green-600" />
               </div>
               <TrendingUp className="h-5 w-5 text-green-600" />
@@ -182,9 +182,9 @@ const CompanionHome = () => {
             <p className="text-2xl font-bold">{hoursThisWeek.toFixed(1)}</p>
           </div>
 
-          <div className="bg-gradient-to-br from-amber-500/10 to-amber-500/5 p-6 rounded-2xl border border-amber-500/20">
+          <div className="bg-gradient-to-br from-primary/10 to-primary/5 p-6 rounded-2xl border border-primary/20">
             <div className="flex items-start justify-between mb-4">
-              <div className="p-3 bg-amber-500/10 rounded-xl">
+              <div className="p-3 bg-primary/10 rounded-xl">
                 <Award className="h-6 w-6 text-amber-600" />
               </div>
               <Star className="h-5 w-5 text-amber-600 fill-amber-600" />
@@ -248,7 +248,7 @@ const CompanionHome = () => {
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-muted-foreground">Rating</span>
                   <div className="flex items-center gap-1">
-                    <Star className="h-4 w-4 fill-amber-500 text-amber-500" />
+                    <Star className="h-4 w-4 fill-primary text-primary" />
                     <span className="text-lg font-bold">{ratingAvg ? ratingAvg.toFixed(1) : "—"}</span>
                   </div>
                 </div>
@@ -256,7 +256,7 @@ const CompanionHome = () => {
             </div>
 
             {/* Recognition */}
-            <div className="bg-gradient-to-br from-amber-500/10 to-amber-500/5 p-6 rounded-2xl border border-amber-500/20">
+            <div className="bg-gradient-to-br from-primary/10 to-primary/5 p-6 rounded-2xl border border-primary/20">
               <div className="flex items-center gap-2 mb-3">
                 <Heart className="h-5 w-5 text-amber-600" />
                 <h2 className="text-lg font-bold">Keep Going!</h2>

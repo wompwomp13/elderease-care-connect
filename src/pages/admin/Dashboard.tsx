@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Users, ClipboardList, Star, Award, ChevronRight, ArrowUpRight, ArrowDownRight, User as UserIcon, Lightbulb } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line } from "recharts";
 import { collection, onSnapshot, query, where } from "firebase/firestore";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { db } from "@/lib/firebase";
 import { cn } from "@/lib/utils";
 
@@ -16,6 +17,7 @@ const Dashboard = () => {
   const [servicePeriodFilter, setServicePeriodFilter] = useState<ServicePeriodFilter>("monthly");
   const [pendingRangeFilter, setPendingRangeFilter] = useState<PendingRangeFilter>("from_2025");
   const [cancelPeriodFilter, setCancelPeriodFilter] = useState<ServicePeriodFilter>("monthly");
+  const [volunteerPeriodFilter, setVolunteerPeriodFilter] = useState<ServicePeriodFilter>("monthly");
 
   // Live collections
   const [requests, setRequests] = useState<any[] | null>(null);
@@ -204,10 +206,10 @@ const Dashboard = () => {
   const pendingPercentage = totalRequests > 0 ? Math.round((pendingRequests / totalRequests) * 1000) / 10 : 0;
 
   const stats = [
-    { title: "Total Service Requests", value: String(totalRequests), icon: ClipboardList, change: "", trend: "up", color: "from-emerald-500 to-emerald-600", subtitle: "live" },
-    { title: "Active Volunteers", value: String(activeVolunteers), icon: Users, change: "", trend: "up", color: "from-blue-500 to-blue-600", subtitle: "approved" },
-    { title: "Completed This Week", value: String(completedThisWeek), icon: Star, change: "", trend: "up", color: "from-purple-500 to-purple-600", subtitle: "confirmed" },
-    { title: "Pending Requests", value: String(pendingRequests), icon: ClipboardList, change: `${pendingPercentage}%`, trend: "up", color: "from-orange-500 to-orange-600", subtitle: "of total • awaiting assignment" },
+    { title: "Total Service Requests", value: String(totalRequests), icon: ClipboardList, change: "", trend: "up", bg: "bg-[#2F86A8]", subtitle: "live" },
+    { title: "Active Volunteers", value: String(activeVolunteers), icon: Users, change: "", trend: "up", bg: "bg-[#2F86A8]", subtitle: "approved" },
+    { title: "Completed This Week", value: String(completedThisWeek), icon: Star, change: "", trend: "up", bg: "bg-[#2F86A8]", subtitle: "confirmed" },
+    { title: "Pending Requests", value: String(pendingRequests), icon: ClipboardList, change: `${pendingPercentage}%`, trend: "up", bg: "bg-[#2F86A8]", subtitle: "of total • awaiting assignment" },
   ];
 
   // Weekly activity (last 7 days)
@@ -250,7 +252,7 @@ const Dashboard = () => {
     return months.map(({ month, services }) => ({ month, services }));
   }, [assignments]);
 
-  // Top performers (top 3 by avg rating then services completed)
+  // Top Volunteers – dynamic analytics with period filter, trends, and forecast
   const tasksMap: Record<string, number> = useMemo(() => {
     const counts: Record<string, number> = {};
     (assignments || []).forEach((a) => {
@@ -262,30 +264,110 @@ const Dashboard = () => {
     return counts;
   }, [assignments]);
 
-  const topVolunteers = useMemo(() => {
+  const volunteerAnalytics = useMemo(() => {
+    const nowMs = Date.now();
+    const periodMs =
+      volunteerPeriodFilter === "weekly"
+        ? 7 * 24 * 60 * 60 * 1000
+        : volunteerPeriodFilter === "monthly"
+          ? 30 * 24 * 60 * 60 * 1000
+          : 365 * 24 * 60 * 60 * 1000;
+    const cutoffMs = nowMs - periodMs;
+    const prevCutoffMs = nowMs - periodMs * 2;
+
+    const tasksInPeriod: Record<string, number> = {};
+    const tasksPrevPeriod: Record<string, number> = {};
+    let totalInPeriod = 0;
+    (assignments || []).forEach((a) => {
+      if (!isCompletedConfirmed(a)) return;
+      const ms = getDateMs(a);
+      if (!ms) return;
+      const email = (a.volunteerEmail || "").toLowerCase();
+      if (!email) return;
+      if (ms >= cutoffMs) {
+        tasksInPeriod[email] = (tasksInPeriod[email] || 0) + 1;
+        totalInPeriod += 1;
+      } else if (ms >= prevCutoffMs) {
+        tasksPrevPeriod[email] = (tasksPrevPeriod[email] || 0) + 1;
+      }
+    });
+
     const list = (approvedVolunteers || []).map((v) => {
       const emailKey = (v.email || "").toLowerCase();
       const r = ratingsMap[emailKey];
       const avg = r ? r.sum / r.count : null;
-      const count = tasksMap[emailKey] || 0;
+      const countAll = tasksMap[emailKey] || 0;
+      const countPeriod = tasksInPeriod[emailKey] || 0;
+      const countPrev = tasksPrevPeriod[emailKey] || 0;
+      const growth = countPrev > 0 ? Math.round(((countPeriod - countPrev) / countPrev) * 100) : countPeriod > 0 ? 100 : 0;
+      const contribution = totalInPeriod > 0 ? Math.round((countPeriod / totalInPeriod) * 1000) / 10 : 0;
       return {
         id: v.id,
+        emailKey,
         name: v.fullName || v.name || v.email || "Volunteer",
         rating: avg,
         reviews: r?.count || 0,
-        services: count,
-        specialty: Array.isArray(v.services) ? v.services.slice(0,2).join(" & ") : (v.services || "Care Services"),
+        services: countAll,
+        servicesPeriod: countPeriod,
+        servicesPrev: countPrev,
+        growth,
+        contribution,
+        specialty: Array.isArray(v.services) ? v.services.slice(0, 2).join(" & ") : (v.services || "Care Services"),
         badge: avg && avg >= 4.8 ? "Top Performer" : avg && avg >= 4.5 ? "Rising Star" : "Volunteer",
         about: v.bio || "Reliable and compassionate volunteer.",
         education: v.education || "",
         method: v.method || "Client-centered care",
       };
     })
-    .filter((v) => v.rating != null)
-    .sort((a, b) => (b.rating! - a.rating!) || (b.services - a.services))
-    .slice(0, 3);
-    return list;
-  }, [approvedVolunteers, ratingsMap, tasksMap]);
+      .filter((v) => v.servicesPeriod > 0 || v.services > 0)
+      .sort((a, b) => b.servicesPeriod - a.servicesPeriod || ((b.rating ?? 0) - (a.rating ?? 0)) || b.services - a.services);
+
+    const topVolunteers = list.slice(0, 5);
+
+    const months: { month: string; key: string }[] = [];
+    const cur = new Date();
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(cur.getFullYear(), cur.getMonth() - i, 1);
+      months.push({ month: d.toLocaleString(undefined, { month: "short", year: "2-digit" }), key: `${d.getFullYear()}-${d.getMonth()}` });
+    }
+
+    const monthlyByEmail: Record<string, number[]> = {};
+    topVolunteers.forEach((v) => { monthlyByEmail[v.emailKey] = months.map(() => 0); });
+    (assignments || []).forEach((a) => {
+      if (!isCompletedConfirmed(a)) return;
+      const ms = getDateMs(a);
+      if (!ms) return;
+      const email = (a.volunteerEmail || "").toLowerCase();
+      if (!monthlyByEmail[email]) return;
+      const d = new Date(ms);
+      const key = `${d.getFullYear()}-${d.getMonth()}`;
+      const idx = months.findIndex((m) => m.key === key);
+      if (idx >= 0) monthlyByEmail[email][idx] += 1;
+    });
+
+    const trendChartData = months.map((m, idx) => {
+      const row: Record<string, string | number> = { month: m.month };
+      topVolunteers.slice(0, 3).forEach((v) => {
+        row[`v_${v.id}`] = monthlyByEmail[v.emailKey]?.[idx] ?? 0;
+      });
+      return row;
+    });
+
+    const avgPerMonth = topVolunteers.map((v) => {
+      const hist = monthlyByEmail[v.emailKey] || [];
+      const sum = hist.reduce((a, b) => a + b, 0);
+      const monthsActive = hist.filter((x) => x > 0).length || 1;
+      return { ...v, avgMonthly: Math.round((sum / Math.max(monthsActive, 3)) * 10) / 10, forecast: Math.round((sum / Math.max(monthsActive, 3)) * 10) / 10 };
+    });
+
+    return {
+      topVolunteers,
+      totalInPeriod,
+      trendChartData,
+      avgPerMonth,
+      periodLabel: volunteerPeriodFilter === "weekly" ? "7 days" : volunteerPeriodFilter === "monthly" ? "30 days" : "12 months",
+    };
+  }, [approvedVolunteers, ratingsMap, tasksMap, assignments, volunteerPeriodFilter]);
 
   // Normalize service names to canonical ids and labels
   const toServiceId = (nameOrId: string): string => {
@@ -386,17 +468,22 @@ const Dashboard = () => {
   return (
     <AdminLayout>
       <div className="space-y-6">
-        <div>
-          <h1 className="text-3xl font-bold mb-1">Dashboard Overview</h1>
-          <p className="text-muted-foreground">Monitor system performance and key metrics</p>
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div>
+            <h1 className="text-3xl font-bold mb-1">Dashboard Overview</h1>
+            <p className="text-muted-foreground">Monitor system performance and key metrics</p>
+          </div>
+          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-green-700 bg-green-50 dark:bg-green-500/10 dark:text-green-400 px-3 py-1.5 rounded-full shrink-0">
+            <span className="h-2 w-2 rounded-full bg-green-500 animate-pulse" />
+            Live from Firestore
+          </span>
         </div>
 
-      {/* Dynamic Pricing moved to end */}
-        {/* Stats Grid */}
+        {/* Stats Grid - always visible */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           {stats.map((stat) => (
             <Card key={stat.title} className="relative overflow-hidden border-0 shadow-lg">
-              <div className={`absolute inset-0 bg-gradient-to-br ${stat.color} opacity-90`} />
+              <div className={`absolute inset-0 ${stat.bg}`} />
               <CardHeader className="relative pb-2">
                 <div className="flex items-start justify-between">
                   <CardTitle className="text-sm font-medium text-white/90">
@@ -421,7 +508,91 @@ const Dashboard = () => {
           ))}
         </div>
 
-        {/* Range Pending - Pending requests from 2025 to recent with filters */}
+        <Tabs defaultValue="overview" className="space-y-4">
+          <TabsList className="grid w-full grid-cols-4 lg:w-auto lg:inline-flex">
+            <TabsTrigger value="overview">Overview</TabsTrigger>
+            <TabsTrigger value="requests">Request Analytics</TabsTrigger>
+            <TabsTrigger value="volunteers">Volunteer Analytics</TabsTrigger>
+            <TabsTrigger value="operations">Operations</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="overview" className="space-y-6 mt-0">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <Card className="shadow-lg border-0">
+            <CardHeader>
+              <CardTitle className="text-lg">Weekly Activity</CardTitle>
+              <p className="text-sm text-muted-foreground">Completed services this week</p>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={240}>
+                <BarChart data={weeklyData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                  <XAxis dataKey="day" stroke="hsl(var(--muted-foreground))" fontSize={12} />
+                  <YAxis stroke="hsl(var(--muted-foreground))" fontSize={12} />
+                  <Tooltip 
+                    contentStyle={{ 
+                      backgroundColor: "hsl(var(--card))", 
+                      border: "1px solid hsl(var(--border))",
+                      borderRadius: "8px"
+                    }} 
+                  />
+                  <Bar dataKey="requests" fill="hsl(var(--primary))" radius={[8, 8, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+          <Card className="shadow-lg border-0">
+            <CardHeader>
+              <CardTitle className="text-lg">Monthly Trend</CardTitle>
+              <p className="text-sm text-muted-foreground">Total services completed</p>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={240}>
+                <LineChart data={monthlyTrend}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                  <XAxis dataKey="month" stroke="hsl(var(--muted-foreground))" fontSize={12} />
+                  <YAxis stroke="hsl(var(--muted-foreground))" fontSize={12} />
+                  <Tooltip 
+                    contentStyle={{ 
+                      backgroundColor: "hsl(var(--card))", 
+                      border: "1px solid hsl(var(--border))",
+                      borderRadius: "8px"
+                    }} 
+                  />
+                  <Line 
+                    type="monotone" 
+                    dataKey="services" 
+                    stroke="hsl(var(--primary))" 
+                    strokeWidth={3}
+                    dot={{ fill: "hsl(var(--primary))", r: 4 }}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+        </div>
+        <Card className="shadow-lg border-0">
+          <CardHeader>
+            <CardTitle className="text-lg">Form Completion Time</CardTitle>
+            <p className="text-sm text-muted-foreground">Average time to complete forms</p>
+          </CardHeader>
+          <CardContent>
+            <div className="grid sm:grid-cols-2 gap-4">
+              <div className="rounded-xl border p-4 bg-muted/40">
+                <div className="text-xs text-muted-foreground mb-1">Guardians / Elders</div>
+                <div className="text-2xl font-bold">{formatDuration(avgElderMs)}</div>
+              </div>
+              <div className="rounded-xl border p-4 bg-muted/40">
+                <div className="text-xs text-muted-foreground mb-1">Volunteers</div>
+                <div className="text-2xl font-bold">{formatDuration(avgVolunteerMs)}</div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+          </TabsContent>
+
+          <TabsContent value="requests" className="space-y-6 mt-0">
+        {/* Range Pending */}
         <Card className="shadow-lg border-0">
           <CardHeader className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             <div>
@@ -537,96 +708,145 @@ const Dashboard = () => {
             )}
           </CardContent>
         </Card>
+          </TabsContent>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Weekly Activity Chart */}
-          <Card className="shadow-lg border-0">
-            <CardHeader>
-              <CardTitle className="text-lg">Weekly Activity</CardTitle>
-              <p className="text-sm text-muted-foreground">Completed services this week</p>
-            </CardHeader>
-            <CardContent>
-              <ResponsiveContainer width="100%" height={240}>
-                <BarChart data={weeklyData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                  <XAxis dataKey="day" stroke="hsl(var(--muted-foreground))" fontSize={12} />
-                  <YAxis stroke="hsl(var(--muted-foreground))" fontSize={12} />
-                  <Tooltip 
-                    contentStyle={{ 
-                      backgroundColor: "hsl(var(--card))", 
-                      border: "1px solid hsl(var(--border))",
-                      borderRadius: "8px"
-                    }} 
-                  />
-                  <Bar dataKey="requests" fill="hsl(var(--primary))" radius={[8, 8, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </CardContent>
-          </Card>
-
-          {/* Monthly Trend */}
-          <Card className="shadow-lg border-0">
-            <CardHeader>
-              <CardTitle className="text-lg">Monthly Trend</CardTitle>
-              <p className="text-sm text-muted-foreground">Total services completed</p>
-            </CardHeader>
-            <CardContent>
-              <ResponsiveContainer width="100%" height={240}>
-                <LineChart data={monthlyTrend}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                  <XAxis dataKey="month" stroke="hsl(var(--muted-foreground))" fontSize={12} />
-                  <YAxis stroke="hsl(var(--muted-foreground))" fontSize={12} />
-                  <Tooltip 
-                    contentStyle={{ 
-                      backgroundColor: "hsl(var(--card))", 
-                      border: "1px solid hsl(var(--border))",
-                      borderRadius: "8px"
-                    }} 
-                  />
-                  <Line 
-                    type="monotone" 
-                    dataKey="services" 
-                    stroke="hsl(var(--primary))" 
-                    strokeWidth={3}
-                    dot={{ fill: "hsl(var(--primary))", r: 4 }}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Form Completion Time (moved here) */}
+          <TabsContent value="volunteers" className="space-y-6 mt-0">
+        {/* Top Volunteers – Dynamic / Forecasting Data Analytics */}
         <Card className="shadow-lg border-0">
-          <CardHeader>
-            <CardTitle className="text-lg">Form Completion Time</CardTitle>
-            <p className="text-sm text-muted-foreground">Average time to complete forms</p>
-          </CardHeader>
-          <CardContent>
-            <div className="grid sm:grid-cols-2 gap-4">
-              <div className="rounded-xl border p-4 bg-muted/40">
-                <div className="text-xs text-muted-foreground mb-1">Guardians / Elders</div>
-                <div className="text-2xl font-bold">{formatDuration(avgElderMs)}</div>
-              </div>
-              <div className="rounded-xl border p-4 bg-muted/40">
-                <div className="text-xs text-muted-foreground mb-1">Volunteers</div>
-                <div className="text-2xl font-bold">{formatDuration(avgVolunteerMs)}</div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Top Volunteers Section */}
-        <div>
-          <div className="flex items-center justify-between mb-4">
+          <CardHeader className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             <div>
-              <h2 className="text-2xl font-bold">Top Volunteers</h2>
-              <p className="text-sm text-muted-foreground">Outstanding performers this month</p>
+              <CardTitle className="text-lg">Top Volunteers</CardTitle>
+              <p className="text-sm text-muted-foreground">Dynamic analytics, trends & forecasting by period</p>
             </div>
-          </div>
+            <div className="flex shrink-0 rounded-lg border bg-muted/50 p-0.5">
+              {(["weekly", "monthly", "yearly"] as const).map((period) => (
+                <button
+                  key={period}
+                  type="button"
+                  onClick={() => setVolunteerPeriodFilter(period)}
+                  className={cn(
+                    "px-3 py-1.5 text-sm font-medium rounded-md transition-colors",
+                    volunteerPeriodFilter === period
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  {period.charAt(0).toUpperCase() + period.slice(1)}
+                </button>
+              ))}
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="rounded-xl border p-4 bg-muted/40">
+                <div className="text-xs text-muted-foreground mb-1">Completed in period</div>
+                <div className="text-2xl font-bold">{volunteerAnalytics.totalInPeriod}</div>
+                <p className="text-xs text-muted-foreground mt-1">Last {volunteerAnalytics.periodLabel}</p>
+              </div>
+              <div className="rounded-xl border p-4 bg-muted/40">
+                <div className="text-xs text-muted-foreground mb-1">Top performers</div>
+                <div className="text-2xl font-bold">{volunteerAnalytics.topVolunteers.length}</div>
+                <p className="text-xs text-muted-foreground mt-1">with activity in period</p>
+              </div>
+              <div className="rounded-xl border p-4 bg-primary/10 border-primary/20">
+                <div className="text-xs text-muted-foreground mb-1">Top 3 share</div>
+                <div className="text-2xl font-bold">
+                  {volunteerAnalytics.totalInPeriod > 0
+                    ? `${Math.round(
+                        (volunteerAnalytics.topVolunteers.slice(0, 3).reduce((s, v) => s + v.servicesPeriod, 0) / volunteerAnalytics.totalInPeriod) * 100
+                      )}%`
+                    : "—"}
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">of period completions</p>
+              </div>
+              <div className="rounded-xl border p-4 bg-muted/40">
+                <div className="text-xs text-muted-foreground mb-1">Forecast (next period)</div>
+                <div className="text-2xl font-bold">
+                  {volunteerAnalytics.avgPerMonth.length > 0
+                    ? Math.round(volunteerAnalytics.avgPerMonth.slice(0, 3).reduce((s, v) => s + v.forecast, 0))
+                    : "—"}
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">est. services from top 3</p>
+              </div>
+            </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-            {topVolunteers.map((volunteer, index) => (
+            {volunteerAnalytics.topVolunteers.length > 0 && (
+              <div className="rounded-xl border border-primary/20 bg-primary/5 p-4">
+                <h4 className="text-sm font-medium mb-2 flex items-center gap-2">
+                  <Lightbulb className="h-4 w-4 text-primary" />
+                  Insights
+                </h4>
+                <ul className="space-y-1 text-sm text-muted-foreground">
+                  {volunteerAnalytics.totalInPeriod > 0 && (
+                    <li>
+                      • Top 3 volunteers completed{" "}
+                      <span className="font-medium text-foreground">
+                        {Math.round(
+                          (volunteerAnalytics.topVolunteers
+                            .slice(0, 3)
+                            .reduce((s, v) => s + v.servicesPeriod, 0) / volunteerAnalytics.totalInPeriod) *
+                            100
+                        )}
+                        %
+                      </span>{" "}
+                      of all services in the last {volunteerAnalytics.periodLabel}.
+                    </li>
+                  )}
+                  {volunteerAnalytics.avgPerMonth.length > 0 && (
+                    <li>
+                      • Based on recent activity, top 3 are forecast to complete ~
+                      <span className="font-medium text-foreground">
+                        {Math.round(volunteerAnalytics.avgPerMonth.slice(0, 3).reduce((s, v) => s + v.forecast, 0))}
+                      </span>{" "}
+                      services in the next period.
+                    </li>
+                  )}
+                  {volunteerAnalytics.topVolunteers.some((v) => v.growth > 0) && (
+                    <li>
+                      • {volunteerAnalytics.topVolunteers.filter((v) => v.growth > 0).length} volunteer(s) showing growth
+                      vs previous period.
+                    </li>
+                  )}
+                </ul>
+              </div>
+            )}
+
+            {volunteerAnalytics.trendChartData.length > 0 && (
+              <div className="rounded-xl border p-4 bg-muted/30">
+                <h4 className="text-sm font-medium mb-4">Top 3 volunteers – services per month (last 6 months)</h4>
+                <ResponsiveContainer width="100%" height={200}>
+                  <LineChart data={volunteerAnalytics.trendChartData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                    <XAxis dataKey="month" stroke="hsl(var(--muted-foreground))" fontSize={11} />
+                    <YAxis stroke="hsl(var(--muted-foreground))" fontSize={11} />
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: "hsl(var(--card))",
+                        border: "1px solid hsl(var(--border))",
+                        borderRadius: "8px",
+                      }}
+                    />
+                    {volunteerAnalytics.topVolunteers.slice(0, 3).map((v, i) => {
+                      const colors = ["hsl(var(--primary))", "hsl(var(--primary-dark))", "hsl(198 63% 69%)"];
+                      return (
+                        <Line
+                          key={v.id}
+                          type="monotone"
+                          dataKey={`v_${v.id}`}
+                          stroke={colors[i]}
+                          strokeWidth={2}
+                          dot={{ r: 3 }}
+                          name={v.name}
+                        />
+                      );
+                    })}
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            {volunteerAnalytics.topVolunteers.slice(0, 3).map((volunteer, index) => (
               <Card 
                 key={volunteer.id} 
                 className={`shadow-lg border-0 transition-all cursor-pointer hover:shadow-xl ${
@@ -690,10 +910,18 @@ const Dashboard = () => {
                               <div className="space-y-1">
                                 <div className="flex items-center gap-2">
                                   <Star className="h-4 w-4 text-yellow-500 fill-yellow-500" />
-                                  <span className="text-sm font-medium">{volunteer.rating?.toFixed(1)} / 5.0</span>
+                                  <span className="text-sm font-medium">{volunteer.rating != null ? volunteer.rating.toFixed(1) : "—"} / 5.0</span>
                                   <span className="text-xs text-muted-foreground">({volunteer.reviews} reviews)</span>
                                 </div>
-                                <div className="text-sm text-muted-foreground">{volunteer.services} services completed</div>
+                                <div className="text-sm text-muted-foreground">{volunteer.services} total • {volunteer.servicesPeriod} this period</div>
+                                {volunteer.contribution > 0 && (
+                                  <div className="text-xs text-primary mt-1">{volunteer.contribution}% of period completions</div>
+                                )}
+                                {volunteer.growth !== 0 && (
+                                  <div className={cn("text-xs mt-1", volunteer.growth > 0 ? "text-green-600" : "text-rose-600")}>
+                                    {volunteer.growth > 0 ? "↑" : "↓"} {Math.abs(volunteer.growth)}% vs prev period
+                                  </div>
+                                )}
                               </div>
                             </CardContent>
                           </Card>
@@ -726,9 +954,10 @@ const Dashboard = () => {
                         <div className="flex items-center gap-3 mt-2 text-xs">
                           <div className="flex items-center gap-1">
                             <Star className="h-3 w-3 text-yellow-500 fill-yellow-500" />
-                            <span className="font-medium">{volunteer.rating?.toFixed(1)}</span>
+                            <span className="font-medium">{volunteer.rating != null ? volunteer.rating.toFixed(1) : "—"}</span>
                           </div>
-                          <span className="text-muted-foreground">{volunteer.services} services</span>
+                          <span className="text-muted-foreground">{volunteer.servicesPeriod} this period</span>
+                          {volunteer.contribution > 0 && <span className="text-primary">{volunteer.contribution}% share</span>}
                         </div>
                       </div>
                       <ChevronRight className={`h-5 w-5 text-muted-foreground transition-transform ${
@@ -740,8 +969,11 @@ const Dashboard = () => {
               </Card>
             ))}
           </div>
-        </div>
+          </CardContent>
+        </Card>
+          </TabsContent>
 
+          <TabsContent value="operations" className="space-y-6 mt-0">
         {/* Cancellations Data Analytics */}
         <Card className="shadow-lg border-0">
           <CardHeader className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
@@ -920,6 +1152,8 @@ const Dashboard = () => {
             <p className="text-xs text-muted-foreground mt-3">Performance tier and demand modifier stack; the combined percentage applies to the base hourly rate.</p>
           </CardContent>
         </Card>
+          </TabsContent>
+        </Tabs>
       </div>
     </AdminLayout>
   );
