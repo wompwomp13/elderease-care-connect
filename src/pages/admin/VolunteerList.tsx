@@ -1,17 +1,22 @@
 import { useEffect, useMemo, useState } from "react";
 import AdminLayout from "@/components/layout/AdminLayout";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Badge } from "@/components/ui/badge";
+import { Search, SlidersHorizontal, ChevronDown, X } from "lucide-react";
 import { db } from "@/lib/firebase";
 import { collection, doc, getDocs, onSnapshot, query, serverTimestamp, updateDoc, where } from "firebase/firestore";
 import { useToast } from "@/components/ui/use-toast";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
+import { IdDocumentView } from "@/components/IdDocumentView";
 
 type Volunteer = {
   id: string;
@@ -22,6 +27,8 @@ type Volunteer = {
   services?: string[];
   gender?: string | null;
   status: "approved" | "pending" | "terminated";
+  idFileUrl?: string | null;
+  idFileName?: string | null;
 };
 
 const SERVICE_OPTIONS = [
@@ -36,7 +43,19 @@ const VolunteerList = () => {
   const [volunteers, setVolunteers] = useState<Volunteer[]>([]);
   const [ratingsMap, setRatingsMap] = useState<Record<string, { sum: number; count: number }>>({});
   const [tasksMap, setTasksMap] = useState<Record<string, number>>({});
-  const [filter, setFilter] = useState<"approved" | "terminated" | "all">("approved");
+  const [filter, setFilter] = useState<"approved" | "terminated" | "all">("all");
+  const [searchTerm, setSearchTerm] = useState<string>("");
+  const [sortBy, setSortBy] = useState<
+    | "name_asc"
+    | "name_desc"
+    | "email_asc"
+    | "email_desc"
+    | "rating_desc"
+    | "rating_asc"
+    | "completed_desc"
+    | "completed_asc"
+  >("name_asc");
+  const [serviceFilters, setServiceFilters] = useState<string[]>([]);
   const [editing, setEditing] = useState<Volunteer | null>(null);
   const [form, setForm] = useState<{ fullName: string; phone: string; address: string; services: string[]; gender: string }>({
     fullName: "",
@@ -46,6 +65,8 @@ const VolunteerList = () => {
     gender: "",
   });
   const [terminateTarget, setTerminateTarget] = useState<Volunteer | null>(null);
+  const [terminationReason, setTerminationReason] = useState("");
+  const [reactivateTarget, setReactivateTarget] = useState<Volunteer | null>(null);
   const [phoneError, setPhoneError] = useState<string | null>(null);
 
   // Allowed service catalog (normalized)
@@ -189,15 +210,28 @@ const VolunteerList = () => {
     }
   };
 
-  const terminateVolunteer = async (v: Volunteer) => {
+  const terminateVolunteer = async (v: Volunteer, reason: string) => {
+    const trimmed = reason.trim();
+    if (!trimmed) {
+      toast({ title: "Please provide a reason for termination", variant: "destructive" });
+      return;
+    }
     try {
-      await updateDoc(doc(db, "pendingVolunteers", v.id), { status: "terminated", decidedAt: serverTimestamp() });
-      // Also set matching users.status = 'terminated' by email
+      await updateDoc(doc(db, "pendingVolunteers", v.id), {
+        status: "terminated",
+        terminationReason: trimmed,
+        decidedAt: serverTimestamp(),
+      });
+      // Also set matching users.status = 'terminated' and terminationReason by email
       if (v.email) {
         const uq = query(collection(db, "users"), where("email", "==", v.email.toLowerCase()));
         const usnap = await getDocs(uq);
         for (const udoc of usnap.docs) {
-          await updateDoc(doc(db, "users", udoc.id), { status: "terminated", updatedAt: serverTimestamp() });
+          await updateDoc(doc(db, "users", udoc.id), {
+            status: "terminated",
+            terminationReason: trimmed,
+            updatedAt: serverTimestamp(),
+          });
         }
       }
       toast({ title: "Volunteer terminated." });
@@ -206,7 +240,29 @@ const VolunteerList = () => {
     }
   };
 
-  const list = volunteers;
+  const reactivateVolunteer = async (v: Volunteer) => {
+    try {
+      await updateDoc(doc(db, "pendingVolunteers", v.id), { status: "approved", terminationReason: null, decidedAt: serverTimestamp() });
+      // Also set matching users.status = 'approved' and clear terminationReason by email
+      if (v.email) {
+        const uq = query(collection(db, "users"), where("email", "==", v.email.toLowerCase()));
+        const usnap = await getDocs(uq);
+        for (const udoc of usnap.docs) {
+          await updateDoc(doc(db, "users", udoc.id), { status: "approved", terminationReason: null, updatedAt: serverTimestamp() });
+        }
+      }
+      toast({ title: "Volunteer reactivated." });
+    } catch (e: any) {
+      toast({ title: "Reactivate failed", description: e?.message ?? "Please try again.", variant: "destructive" });
+    }
+  };
+
+  const getFamilyName = (fullName?: string | null): string => {
+    const name = (fullName || "").trim();
+    if (!name) return "";
+    const parts = name.split(/\s+/);
+    return parts[parts.length - 1]?.toLowerCase() || "";
+  };
 
   const getAvg = (email?: string) => {
     const r = ratingsMap[(email || "").toLowerCase()];
@@ -217,23 +273,95 @@ const VolunteerList = () => {
     return tasksMap[(email || "").toLowerCase()] || 0;
   };
 
+  const list = useMemo(() => {
+    let rows = volunteers.slice();
+    const term = searchTerm.trim().toLowerCase();
+    if (term) {
+      rows = rows.filter((v) => {
+        const services = Array.isArray(v.services) ? v.services.join(", ") : (v.services ?? "");
+        return [
+          v.fullName || "",
+          v.email || "",
+          services,
+        ]
+          .some((val) => String(val).toLowerCase().includes(term));
+      });
+    }
+
+    if (serviceFilters.length > 0) {
+      rows = rows.filter((v) => {
+        const services = Array.isArray(v.services) ? v.services : [];
+        if (!services.length) return false;
+        return serviceFilters.some((s) =>
+          services.some((vs) => vs.toLowerCase().includes(s.toLowerCase()))
+        );
+      });
+    }
+
+    rows.sort((a, b) => {
+      switch (sortBy) {
+        case "name_asc": {
+          const fa = getFamilyName(a.fullName);
+          const fb = getFamilyName(b.fullName);
+          if (fa !== fb) return fa.localeCompare(fb);
+          return (a.fullName || "").localeCompare(b.fullName || "");
+        }
+        case "name_desc": {
+          const fa = getFamilyName(a.fullName);
+          const fb = getFamilyName(b.fullName);
+          if (fa !== fb) return fb.localeCompare(fa);
+          return (b.fullName || "").localeCompare(a.fullName || "");
+        }
+        case "email_asc":
+          return (a.email || "").toLowerCase().localeCompare((b.email || "").toLowerCase());
+        case "email_desc":
+          return (b.email || "").toLowerCase().localeCompare((a.email || "").toLowerCase());
+        case "rating_desc": {
+          const ra = getAvg(a.email) ?? 0;
+          const rb = getAvg(b.email) ?? 0;
+          return rb - ra;
+        }
+        case "rating_asc": {
+          const ra = getAvg(a.email) ?? 0;
+          const rb = getAvg(b.email) ?? 0;
+          return ra - rb;
+        }
+        case "completed_desc": {
+          const ta = getTasks(a.email);
+          const tb = getTasks(b.email);
+          return tb - ta;
+        }
+        case "completed_asc": {
+          const ta = getTasks(a.email);
+          const tb = getTasks(b.email);
+          return ta - tb;
+        }
+        default:
+          return 0;
+      }
+    });
+
+    return rows;
+  }, [volunteers, searchTerm, sortBy, serviceFilters, ratingsMap, tasksMap]);
+
   return (
     <AdminLayout>
       <div className="space-y-6">
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-bold">Volunteer List</h1>
-            <p className="text-sm text-muted-foreground">Manage approved volunteers, edit details, or terminate/delete accounts.</p>
+            <p className="text-sm text-muted-foreground">Manage volunteers, edit details, terminate or reactivate accounts.</p>
           </div>
           <div className="flex items-center gap-2">
+            <span className="text-sm text-muted-foreground whitespace-nowrap">Status:</span>
             <Select value={filter} onValueChange={(v: any) => setFilter(v)}>
-              <SelectTrigger className="w-40">
-                <SelectValue placeholder="Filter" />
+              <SelectTrigger className="w-44">
+                <SelectValue placeholder="Filter by status" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="approved">Approved</SelectItem>
-                <SelectItem value="terminated">Terminated</SelectItem>
-                <SelectItem value="all">All</SelectItem>
+                <SelectItem value="approved">Approved only</SelectItem>
+                <SelectItem value="terminated">Terminated only</SelectItem>
+                <SelectItem value="all">All volunteers</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -241,7 +369,110 @@ const VolunteerList = () => {
 
         <Card>
           <CardContent className="p-0">
-            <Table>
+            <div className="flex flex-wrap items-center gap-2 sm:gap-3 p-4 border-b">
+              <div className="relative flex-1 min-w-[140px] sm:min-w-[200px]">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  placeholder="Search name, email, services..."
+                  className="pl-9 h-9"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <Select value={sortBy} onValueChange={(v: any) => setSortBy(v)}>
+                  <SelectTrigger className="w-[180px] h-9 text-sm">
+                    <SelectValue placeholder="Sort by" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="name_asc">Name A–Z</SelectItem>
+                    <SelectItem value="name_desc">Name Z–A</SelectItem>
+                    <SelectItem value="email_asc">Email A–Z</SelectItem>
+                    <SelectItem value="email_desc">Email Z–A</SelectItem>
+                    <SelectItem value="rating_desc">Rating ↓</SelectItem>
+                    <SelectItem value="rating_asc">Rating ↑</SelectItem>
+                    <SelectItem value="completed_desc">Completed ↓</SelectItem>
+                    <SelectItem value="completed_asc">Completed ↑</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" size="sm" className="h-9 gap-1.5">
+                      <SlidersHorizontal className="h-4 w-4" />
+                      <span>Services</span>
+                      {serviceFilters.length > 0 && (
+                        <Badge variant="secondary" className="ml-0.5 h-5 min-w-5 px-1.5 text-xs">
+                          {serviceFilters.length}
+                        </Badge>
+                      )}
+                      <ChevronDown className="h-3.5 w-3.5 opacity-50" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent align="end" className="w-64 p-3">
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-medium">Filter by services</span>
+                        {serviceFilters.length > 0 && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 text-xs text-muted-foreground"
+                            onClick={() => setServiceFilters([])}
+                          >
+                            <X className="h-3 w-3 mr-1" />
+                            Clear
+                          </Button>
+                        )}
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {SERVICE_OPTIONS.map((s) => {
+                          const active = serviceFilters.includes(s.label);
+                          return (
+                            <button
+                              key={s.id}
+                              type="button"
+                              onClick={() =>
+                                setServiceFilters((current) => {
+                                  const next = new Set(current);
+                                  if (active) next.delete(s.label);
+                                  else next.add(s.label);
+                                  return Array.from(next);
+                                })
+                              }
+                              className={cn(
+                                "flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs transition-colors",
+                                active
+                                  ? "bg-primary text-primary-foreground border-primary"
+                                  : "bg-muted/50 text-muted-foreground border-transparent hover:bg-muted hover:text-foreground"
+                              )}
+                            >
+                              {active && <span className="h-1.5 w-1.5 rounded-full bg-primary-foreground" />}
+                              {s.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </PopoverContent>
+                </Popover>
+              </div>
+            </div>
+            <div className="px-4 py-2 border-b bg-muted/30 text-sm text-muted-foreground">
+              {list.length} volunteer{list.length !== 1 ? "s" : ""} found
+              {(searchTerm.trim() || serviceFilters.length > 0) && " (filtered)"}
+            </div>
+            <div className="overflow-x-auto">
+            <Table className="w-full min-w-[800px] table-fixed">
+              <colgroup>
+                <col style={{ width: "11%" }} />
+                <col style={{ width: "16%" }} />
+                <col style={{ width: "11%" }} />
+                <col style={{ width: "21%" }} />
+                <col style={{ width: "8%" }} />
+                <col style={{ width: "8%" }} />
+                <col style={{ width: "9%" }} />
+                <col style={{ width: "16%" }} />
+              </colgroup>
               <TableHeader>
                 <TableRow>
                   <TableHead>Name</TableHead>
@@ -264,34 +495,44 @@ const VolunteerList = () => {
                     <TableCell className="font-medium">{v.fullName || "—"}</TableCell>
                     <TableCell>{v.email || "—"}</TableCell>
                     <TableCell>{formatPH(v.phone)}</TableCell>
-                    <TableCell className="max-w-[280px] truncate">{Array.isArray(v.services) ? v.services.join(", ") : "—"}</TableCell>
+                    <TableCell className="break-words">{Array.isArray(v.services) ? v.services.join(", ") : "—"}</TableCell>
                     <TableCell className="text-right">{getAvg(v.email)?.toFixed(2) ?? "—"}</TableCell>
                     <TableCell className="text-right">{getTasks(v.email)}</TableCell>
                     <TableCell>
-                      <span className={`text-xs px-2 py-0.5 rounded-full border ${
-                        v.status === "approved" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-rose-50 text-rose-700 border-rose-200"
-                      }`}>{v.status}</span>
+                      <span className={cn(
+                        "text-xs px-2 py-0.5 rounded-full border",
+                        v.status === "approved" ? "bg-emerald-50 text-emerald-700 border-emerald-200" :
+                        v.status === "terminated" ? "bg-rose-50 text-rose-700 border-rose-200" :
+                        "bg-amber-50 text-amber-700 border-amber-200"
+                      )}>{v.status}</span>
                     </TableCell>
-                    <TableCell className="space-x-2">
-                      <Button size="sm" variant="outline" onClick={() => openEdit(v)}>Edit</Button>
-                      {v.status !== "terminated" && (
-                        <Button size="sm" variant="destructive" onClick={() => setTerminateTarget(v)}>Terminate</Button>
-                      )}
+                    <TableCell className="whitespace-nowrap">
+                      <div className="flex items-center gap-2 flex-nowrap">
+                        <Button size="sm" variant="outline" onClick={() => openEdit(v)}>Edit</Button>
+                        {v.status === "terminated" ? (
+                          <Button size="sm" variant="outline" className="text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 shrink-0" onClick={() => setReactivateTarget(v)}>Reactivate</Button>
+                        ) : (
+                          <Button size="sm" variant="destructive" onClick={() => setTerminateTarget(v)} className="shrink-0">Terminate</Button>
+                        )}
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
+            </div>
           </CardContent>
         </Card>
 
         {/* Edit Dialog */}
         <Dialog open={!!editing} onOpenChange={(o) => { if (!o) setEditing(null); }}>
-          <DialogContent className="sm:max-w-lg">
+          <DialogContent className="sm:max-w-2xl">
             <DialogHeader>
               <DialogTitle>Edit Volunteer</DialogTitle>
             </DialogHeader>
             <div className="space-y-4">
+            <div className="flex flex-col md:flex-row gap-6">
+              <div className="flex-1 min-w-0 space-y-4">
               <div>
                 <label className="block text-sm font-medium mb-1">Full Name</label>
                 <Input value={form.fullName} onChange={(e) => setForm((f) => ({ ...f, fullName: e.target.value }))} />
@@ -348,7 +589,19 @@ const VolunteerList = () => {
                   ))}
                 </div>
               </div>
-              <div className="flex justify-end gap-2">
+              </div>
+              {editing && (
+                <div className="md:w-48 shrink-0 md:border-l md:pl-6 flex flex-col">
+                  <label className="block text-sm font-medium mb-2">ID Document</label>
+                  <IdDocumentView
+                    url={editing.idFileUrl ?? null}
+                    fileName={editing.idFileName}
+                    name={editing.fullName || editing.email || "Volunteer"}
+                  />
+                </div>
+              )}
+            </div>
+              <div className="flex justify-end gap-2 pt-2 border-t">
                 <Button variant="outline" onClick={() => setEditing(null)}>Cancel</Button>
                 <Button onClick={saveEdit}>Save</Button>
               </div>
@@ -357,25 +610,67 @@ const VolunteerList = () => {
         </Dialog>
 
         {/* Terminate Confirmation */}
-        <AlertDialog open={!!terminateTarget} onOpenChange={(o) => { if (!o) setTerminateTarget(null); }}>
+        <AlertDialog open={!!terminateTarget} onOpenChange={(o) => { if (!o) { setTerminateTarget(null); setTerminationReason(""); } }}>
           <AlertDialogContent>
             <AlertDialogHeader>
               <AlertDialogTitle>Terminate volunteer?</AlertDialogTitle>
               <AlertDialogDescription>
-                This will mark the volunteer as terminated and restrict their access. You can re-approve later by changing their status.
+                This will mark the volunteer as terminated. They will be able to log in to see this reason but cannot access any other features. You can reactivate their account later if needed.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <div className="space-y-4">
+              <div>
+                <label htmlFor="termination-reason" className="block text-sm font-medium mb-2">Reason for termination (required)</label>
+                <Textarea
+                  id="termination-reason"
+                  placeholder="e.g., Policy violation, no longer available, appeal under review..."
+                  value={terminationReason}
+                  onChange={(e) => setTerminationReason(e.target.value)}
+                  rows={3}
+                  className="resize-none"
+                />
+                <p className="text-xs text-muted-foreground mt-1">The volunteer will see this message when they log in.</p>
+              </div>
+              <div className="flex justify-end gap-2">
+                <AlertDialogCancel onClick={() => setTerminationReason("")}>Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  disabled={!terminationReason.trim()}
+                  onClick={async () => {
+                    if (terminateTarget && terminationReason.trim()) {
+                      await terminateVolunteer(terminateTarget, terminationReason.trim());
+                    }
+                    setTerminateTarget(null);
+                    setTerminationReason("");
+                  }}
+                >
+                  Confirm
+                </AlertDialogAction>
+              </div>
+            </div>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        {/* Reactivate Confirmation */}
+        <AlertDialog open={!!reactivateTarget} onOpenChange={(o) => { if (!o) setReactivateTarget(null); }}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Reactivate volunteer?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This will restore the volunteer&apos;s account and grant them access again. They will be able to receive new assignments.
               </AlertDialogDescription>
             </AlertDialogHeader>
             <div className="flex justify-end gap-2">
               <AlertDialogCancel>Cancel</AlertDialogCancel>
               <AlertDialogAction
+                className="bg-emerald-600 hover:bg-emerald-700"
                 onClick={async () => {
-                  if (terminateTarget) {
-                    await terminateVolunteer(terminateTarget);
+                  if (reactivateTarget) {
+                    await reactivateVolunteer(reactivateTarget);
                   }
-                  setTerminateTarget(null);
+                  setReactivateTarget(null);
                 }}
               >
-                Confirm
+                Reactivate
               </AlertDialogAction>
             </div>
           </AlertDialogContent>

@@ -3,6 +3,7 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import CompanionGate from "@/components/companion/CompanionGate";
 import Index from "./pages/Index";
 import Login from "./pages/Login";
 import Signup from "./pages/Signup";
@@ -52,11 +53,12 @@ const App = () => (
           <Route path="/admin/volunteers" element={<VolunteerList />} />
           <Route path="/admin/requests" element={<ServiceRequests />} />
           
-          <Route path="/companion" element={<CompanionHome />} />
-          <Route path="/companion/assignments" element={<MyAssignments />} />
-          <Route path="/companion/activity" element={<ActivityLog />} />
-          
-          <Route path="/companion/profile" element={<CompanionProfile />} />
+          <Route path="/companion" element={<CompanionGate />}>
+            <Route index element={<CompanionHome />} />
+            <Route path="assignments" element={<MyAssignments />} />
+            <Route path="activity" element={<ActivityLog />} />
+            <Route path="profile" element={<CompanionProfile />} />
+          </Route>
 
           {/* Fallback: if already logged, push to role home */}
           <Route path="/home" element={(() => {

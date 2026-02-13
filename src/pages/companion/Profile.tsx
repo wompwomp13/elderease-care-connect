@@ -4,7 +4,9 @@ import { getCurrentUser, logout, subscribeToAuth, type AuthProfile } from "@/lib
 import logo from "@/assets/logo.png";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useEffect, useState } from "react";
-import { type AuthProfile as AP } from "@/lib/auth";
+import { IdDocumentView } from "@/components/IdDocumentView";
+import { collection, onSnapshot, query, where } from "firebase/firestore";
+import { db } from "@/lib/firebase";
 
 const CompanionNavbar = () => {
   const user = getCurrentUser();
@@ -37,6 +39,31 @@ const CompanionNavbar = () => {
 
 const Profile = () => {
   const [auth, setAuth] = useState<AuthProfile | null>(null);
+  const [idDoc, setIdDoc] = useState<{ idFileUrl: string | null; idFileName?: string | null } | null>(null);
+
+  useEffect(() => {
+    const unsub = subscribeToAuth(setAuth);
+    return () => unsub();
+  }, []);
+
+  useEffect(() => {
+    const email = (auth?.email ?? "").trim().toLowerCase();
+    if (!email || auth?.role !== "companion") {
+      setIdDoc(null);
+      return;
+    }
+    const q = query(collection(db, "pendingVolunteers"), where("email", "==", email));
+    const unsub = onSnapshot(q, (snap) => {
+      const doc = snap.docs[0];
+      if (!doc) {
+        setIdDoc(null);
+        return;
+      }
+      const d = doc.data() as { idFileUrl?: string | null; idFileName?: string | null };
+      setIdDoc({ idFileUrl: d.idFileUrl ?? null, idFileName: d.idFileName });
+    });
+    return () => unsub();
+  }, [auth?.email, auth?.role]);
 
   const formatPH = (phone?: string | null): string => {
     if (!phone) return "—";
@@ -49,28 +76,58 @@ const Profile = () => {
     return raw;
   };
 
-  useEffect(() => {
-    const unsub = subscribeToAuth(setAuth);
-    return () => unsub();
-  }, []);
-
   return (
     <div className="min-h-screen bg-gradient-to-b from-background to-muted/20">
       <CompanionNavbar />
-      <main className="container mx-auto px-4 py-10 max-w-3xl">
-        <h1 className="text-3xl md:text-4xl font-bold mb-6">My Profile</h1>
-        <Card>
-          <CardHeader>
-            <CardTitle>Account Details</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3 text-sm">
-            <div className="flex justify-between"><span className="text-muted-foreground">Name</span><span className="font-medium">{auth?.displayName || "—"}</span></div>
-            <div className="flex justify-between"><span className="text-muted-foreground">Email</span><span className="font-medium">{auth?.email || "—"}</span></div>
-            <div className="flex justify-between"><span className="text-muted-foreground">Phone</span><span className="font-medium">{formatPH(auth?.phone)}</span></div>
-            <div className="flex justify-between"><span className="text-muted-foreground">Role</span><span className="font-medium">{auth?.role || "—"}</span></div>
-            <div className="flex justify-between"><span className="text-muted-foreground">UID</span><span className="font-medium">{auth?.uid || "—"}</span></div>
-          </CardContent>
-        </Card>
+      <main className="container mx-auto px-4 py-10 max-w-4xl">
+        <h1 className="text-3xl md:text-4xl font-bold mb-8">My Profile</h1>
+        <div className="grid gap-6 md:grid-cols-[1fr,auto]">
+          <Card>
+            <CardHeader>
+              <CardTitle>Account Details</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4 text-sm">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="flex flex-col gap-1 py-2 border-b border-muted/50">
+                  <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Name</span>
+                  <span className="font-medium">{auth?.displayName || "—"}</span>
+                </div>
+                <div className="flex flex-col gap-1 py-2 border-b border-muted/50">
+                  <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Email</span>
+                  <span className="font-medium break-all">{auth?.email || "—"}</span>
+                </div>
+                <div className="flex flex-col gap-1 py-2 border-b border-muted/50">
+                  <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Phone</span>
+                  <span className="font-medium">{formatPH(auth?.phone)}</span>
+                </div>
+                <div className="flex flex-col gap-1 py-2 border-b border-muted/50">
+                  <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Role</span>
+                  <span className="font-medium capitalize">{auth?.role || "—"}</span>
+                </div>
+                <div className="flex flex-col gap-1 py-2 border-b border-muted/50 sm:col-span-2">
+                  <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">User ID</span>
+                  <span className="font-mono text-xs font-medium truncate">{auth?.uid || "—"}</span>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          {auth?.role === "companion" && (
+            <Card className="h-fit">
+              <CardHeader>
+                <CardTitle>ID Document</CardTitle>
+                <p className="text-sm text-muted-foreground">Your submitted ID from your volunteer application</p>
+              </CardHeader>
+              <CardContent>
+                <IdDocumentView
+                  url={idDoc?.idFileUrl ?? null}
+                  fileName={idDoc?.idFileName}
+                  name={auth?.displayName || auth?.email || "Volunteer"}
+                  className="w-full max-w-[240px]"
+                />
+              </CardContent>
+            </Card>
+          )}
+        </div>
       </main>
     </div>
   );

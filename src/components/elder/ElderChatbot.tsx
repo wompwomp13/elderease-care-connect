@@ -117,6 +117,17 @@ const ElderChatbot = () => {
       return n;
     };
 
+    const extractServiceFilter = (): string | null => {
+      if (lower.includes("companionship")) return "Companionship";
+      if (lower.includes("light housekeeping") || lower.includes("housekeeping"))
+        return "Light Housekeeping";
+      if (lower.includes("running errands") || lower.includes("errands"))
+        return "Running Errands";
+      if (lower.includes("home visits") || lower.includes("home visit") || lower.includes("visit"))
+        return "Home Visits";
+      return null;
+    };
+
     const extractBottomCount = (): number | null => {
       const match = lower.match(/(worst|lowest)\s+(\d+)/);
       if (!match) return null;
@@ -133,7 +144,15 @@ const ElderChatbot = () => {
       const rated = volunteers.filter(
         (v) => typeof v.avgRating === "number" && v.ratingCount > 0
       );
-      const pool = rated.length > 0 ? rated : [...volunteers];
+      let pool = rated.length > 0 ? rated : [...volunteers];
+
+      const serviceFilter = extractServiceFilter();
+      if (serviceFilter) {
+        const filtered = pool.filter((v) => v.services?.includes(serviceFilter));
+        if (filtered.length > 0) {
+          pool = filtered;
+        }
+      }
 
       const sorted = [...pool].sort((a, b) => {
         const ar = a.avgRating ?? 0;
@@ -181,7 +200,15 @@ const ElderChatbot = () => {
       const rated = volunteers.filter(
         (v) => typeof v.avgRating === "number" && v.ratingCount > 0
       );
-      const pool = rated.length > 0 ? rated : [...volunteers];
+      let pool = rated.length > 0 ? rated : [...volunteers];
+
+      const serviceFilter = extractServiceFilter();
+      if (serviceFilter) {
+        const filtered = pool.filter((v) => v.services?.includes(serviceFilter));
+        if (filtered.length > 0) {
+          pool = filtered;
+        }
+      }
 
       const sortedByRatingAsc = [...pool].sort((a, b) => {
         const ar = a.avgRating ?? 5;
@@ -272,6 +299,85 @@ const ElderChatbot = () => {
     );
   };
 
+  const buildPricingReply = (question: string): string | null => {
+    const lower = question.toLowerCase();
+    const looksLikePricingQuestion =
+      lower.includes("price") ||
+      lower.includes("pricing") ||
+      lower.includes("how much") ||
+      lower.includes("cost") ||
+      lower.includes("rates") ||
+      lower.includes("rate") ||
+      lower.includes("fee") ||
+      lower.includes("fees");
+
+    if (!looksLikePricingQuestion) return null;
+
+    const SERVICE_RATES: Record<string, number> = {
+      Companionship: 150,
+      "Light Housekeeping": 170,
+      "Running Errands": 200,
+      "Home Visits": 180,
+    };
+
+    // Try to detect a specific service + duration, e.g.
+    // "companionship for 3 hours" or "3 hours of companionship"
+    const service = (() => {
+      if (lower.includes("companionship")) return "Companionship";
+      if (lower.includes("light housekeeping") || lower.includes("housekeeping"))
+        return "Light Housekeeping";
+      if (lower.includes("running errands") || lower.includes("errands"))
+        return "Running Errands";
+      if (lower.includes("home visits") || lower.includes("home visit") || lower.includes("visit"))
+        return "Home Visits";
+      return null;
+    })();
+
+    const hoursMatch =
+      lower.match(/(\d+(\.\d+)?)\s*hours?/) ||
+      lower.match(/hours?\s*for\s*(\d+(\.\d+)?)/) ||
+      lower.match(/for\s*(\d+(\.\d+)?)\s*hours?/);
+
+    if (service && hoursMatch) {
+      const numStr = hoursMatch[1];
+      const hours = parseFloat(numStr);
+      const rate = SERVICE_RATES[service] ?? 0;
+      if (Number.isFinite(hours) && hours > 0 && rate > 0) {
+        const base = rate * hours;
+        const fee = base * 0.05;
+        const subtotal = base + fee;
+        const fmt = (v: number) => `₱${v.toFixed(2)}`;
+
+        return (
+          `For ${hours} hour${hours === 1 ? "" : "s"} of ${service}, ElderEase would start with:\n\n` +
+          `• Base service cost: ${fmt(base)} (${fmt(rate)} × ${hours} hour${hours === 1 ? "" : "s"})\n` +
+          `• Service fee (5%): ${fmt(fee)}\n\n` +
+          `So before any dynamic adjustment, the estimated total would be about ${fmt(subtotal)}.\n\n` +
+          "When your request is assigned to a volunteer, ElderEase may apply a small dynamic pricing adjustment " +
+          "based on demand and the volunteer’s performance. The exact final total will appear in your receipt under Notifications."
+        );
+      }
+    }
+
+    const baseLines = [
+      "• Companionship – ₱150 per hour",
+      "• Light Housekeeping – ₱170 per hour",
+      "• Running Errands – ₱200 per hour",
+      "• Home Visits – ₱180 per hour",
+    ];
+
+    return (
+      "ElderEase uses simple base hourly rates in Philippine pesos (PHP), and then applies a small dynamic adjustment when needed.\n\n" +
+      "Current base rates are:\n" +
+      baseLines.join("\n") +
+      "\n\nWhen you submit a request, ElderEase calculates your total by:\n" +
+      "• Multiplying each selected service by the number of hours you chose\n" +
+      "• Adding a small 5% service fee\n" +
+      "• Optionally applying a dynamic pricing adjustment when demand is high or a volunteer has a very strong performance record\n\n" +
+      "The exact total for your request, including any dynamic adjustment and the 5% fee, will appear in your receipt under Notifications after a volunteer is assigned."
+    );
+  };
+
   const handleSend = () => {
     const rawInput = inputValue.trim();
     if (!rawInput || isSending) return;
@@ -305,6 +411,25 @@ const ElderChatbot = () => {
         {
           type: "bot",
           message: volunteerReply,
+          time: replyTime,
+        },
+      ]);
+      setIsTyping(false);
+      setIsSending(false);
+      return;
+    }
+
+    const pricingReply = buildPricingReply(resolved);
+    if (pricingReply) {
+      const replyTime = new Date().toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+      setMessages((prev) => [
+        ...prev,
+        {
+          type: "bot",
+          message: pricingReply,
           time: replyTime,
         },
       ]);

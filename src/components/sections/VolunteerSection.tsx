@@ -3,11 +3,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { Heart, Mail, Phone, MapPin, Clock, Users, Home, ShoppingBasket, HeartHandshake, Upload, Check } from "lucide-react";
+import { Heart, Mail, Phone, MapPin, Clock, Users, Home, ShoppingBasket, HeartHandshake, Check } from "lucide-react";
 import { motion } from "framer-motion";
 import { useRef, useState } from "react";
-import { db } from "@/lib/firebase";
+import { db, storage } from "@/lib/firebase";
 import { addDoc, collection, serverTimestamp } from "firebase/firestore";
+import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { toast } from "@/hooks/use-toast";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
@@ -38,13 +39,17 @@ const VolunteerSection = () => {
   const [address, setAddress] = useState("");
   const [message, setMessage] = useState("");
   const [selectedServices, setSelectedServices] = useState<string[]>([]);
-  const [idPreviewName, setIdPreviewName] = useState<string | null>(null); // placeholder, not uploaded
+  const [idFile, setIdFile] = useState<File | null>(null);
+  const [idUploadProgress, setIdUploadProgress] = useState(false);
   const [gender, setGender] = useState<string>("");
   const [phoneError, setPhoneError] = useState<string | null>(null);
 
   const toggleService = (id: string) => {
     setSelectedServices((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   };
+
+  const MAX_ID_SIZE_MB = 5;
+  const MAX_ID_SIZE_BYTES = MAX_ID_SIZE_MB * 1024 * 1024;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -58,8 +63,22 @@ const VolunteerSection = () => {
       toast({ title: "Invalid Philippine phone number", description: "Use +63 9XXXXXXXXX format.", variant: "destructive" });
       return;
     }
+    if (idFile && idFile.size > MAX_ID_SIZE_BYTES) {
+      toast({ title: "ID file too large", description: `Please use a file under ${MAX_ID_SIZE_MB}MB.`, variant: "destructive" });
+      return;
+    }
     setPhoneError(null);
+    setIdUploadProgress(true);
     try {
+      let idFileUrl: string | null = null;
+      if (idFile) {
+        const safeEmail = email.trim().toLowerCase().replace(/[^a-z0-9._-]/g, "_");
+        const ext = idFile.name.split(".").pop() || "bin";
+        const path = `volunteer-ids/${Date.now()}_${safeEmail}_${idFile.name.slice(0, 50)}.${ext}`;
+        const storageRef = ref(storage, path);
+        await uploadBytes(storageRef, idFile);
+        idFileUrl = await getDownloadURL(storageRef);
+      }
       const fullName = [firstName.trim(), middleName.trim(), lastName.trim()].filter(Boolean).join(" ");
       await addDoc(collection(db, "pendingVolunteers"), {
         fullName: fullName.trim(),
@@ -72,7 +91,8 @@ const VolunteerSection = () => {
         gender,
         services: selectedServices,
         message: message.trim(),
-        idFileName: idPreviewName, // placeholder only; file is not uploaded yet
+        ...(idFileUrl && { idFileUrl }),
+        ...(idFile && { idFileName: idFile.name }),
         status: "pending",
         createdAt: serverTimestamp(),
       });
@@ -90,9 +110,11 @@ const VolunteerSection = () => {
         });
       } catch {}
       toast({ title: "Application submitted!", description: "Our admin team will review your details and contact you soon." });
-      setFirstName(""); setMiddleName(""); setLastName(""); setEmail(""); setPhone(""); setAddress(""); setMessage(""); setSelectedServices([]); setIdPreviewName(null); setGender("");
+      setFirstName(""); setMiddleName(""); setLastName(""); setEmail(""); setPhone(""); setAddress(""); setMessage(""); setSelectedServices([]); setIdFile(null); setGender("");
     } catch (err: any) {
       toast({ title: "Submission failed", description: err?.message ?? "Please try again later.", variant: "destructive" });
+    } finally {
+      setIdUploadProgress(false);
     }
   };
 
@@ -351,28 +373,32 @@ const VolunteerSection = () => {
                 </div>
 
                 <div>
-                  <Label className="text-sm font-semibold text-foreground">Upload Valid ID (placeholder)</Label>
+                  <Label htmlFor="id-upload" className="text-sm font-semibold text-foreground">Upload Valid ID (optional)</Label>
                   <div className="mt-2 flex items-center gap-3">
-                    <Input type="file" accept="image/*,application/pdf" disabled onChange={(e) => {
-                      const file = e.target.files?.[0] || null;
-                      setIdPreviewName(file ? file.name : null);
-                    }} aria-label="Upload government ID (disabled placeholder)" />
-                    <Button type="button" variant="outline" className="gap-2" disabled>
-                      <Upload className="h-4 w-4" /> Upload
-                    </Button>
+                    <Input
+                      id="id-upload"
+                      type="file"
+                      accept="image/*,application/pdf"
+                      onChange={(e) => setIdFile(e.target.files?.[0] ?? null)}
+                      aria-label="Upload government-issued ID"
+                      disabled={idUploadProgress}
+                    />
                   </div>
-                  {idPreviewName && (
-                    <p className="text-xs text-muted-foreground mt-1">Selected: {idPreviewName} (not uploaded)</p>
+                  {idFile && (
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Selected: {idFile.name} ({(idFile.size / 1024).toFixed(1)} KB)
+                    </p>
                   )}
-                  <p className="text-xs text-muted-foreground mt-1">ID upload will be enabled once storage is set up.</p>
+                  <p className="text-xs text-muted-foreground mt-1">Accepted: images or PDF. Max {MAX_ID_SIZE_MB}MB.</p>
                 </div>
 
                 <Button
                   type="submit"
                   size="lg"
                   className="w-full bg-gradient-to-r from-primary to-primary-dark hover:opacity-90 transition-opacity"
+                  disabled={idUploadProgress}
                 >
-                  Submit Application
+                  {idUploadProgress ? "Uploading & Submitting..." : "Submit Application"}
                 </Button>
               </form>
             </CardContent>

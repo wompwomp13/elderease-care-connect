@@ -1,0 +1,15 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Volunteer ID uploads from public form (no auth required)
+    match /volunteer-ids/{fileName} {
+      allow read: if true;
+      allow write: if request.resource.size < 5 * 1024 * 1024
+                   && (request.resource.contentType.matches('image/.*')
+                       || request.resource.contentType == 'application/pdf');
+    }
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -1,6 +1,7 @@
 import { initializeApp } from "firebase/app";
 import { getAuth, setPersistence, browserLocalPersistence } from "firebase/auth";
 import { getFirestore, initializeFirestore } from "firebase/firestore";
+import { getStorage } from "firebase/storage";
 
 const firebaseConfig = {
   apiKey: "AIzaSyAxbN1Nv6-rFkdegCYYpB1XOtfO0lGBjHg",
@@ -15,6 +16,8 @@ export const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 // Use long-polling auto-detection to avoid ad-block/firewall issues in dev
 export const db = initializeFirestore(app, { experimentalAutoDetectLongPolling: true, ignoreUndefinedProperties: true });
+
+export const storage = getStorage(app);
 
 setPersistence(auth, browserLocalPersistence).catch(() => {
   // No-op: fallback to default persistence when blocked

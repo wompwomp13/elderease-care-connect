@@ -2,7 +2,7 @@ import AdminLayout from "@/components/layout/AdminLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Check, X, Mail, Phone, Calendar, MapPin, Inbox, Loader2, FileText, Search } from "lucide-react";
+import { Check, X, Mail, Phone, Calendar, MapPin, Inbox, Loader2, FileText, Search, ImageOff } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { db } from "@/lib/firebase";
@@ -10,6 +10,7 @@ import { collection, onSnapshot, orderBy, query, Timestamp, doc, updateDoc, serv
 import { format } from "date-fns";
 import { Input } from "@/components/ui/input";
 import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "@/components/ui/pagination";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 type PendingVolunteer = {
   id: string;
@@ -20,6 +21,7 @@ type PendingVolunteer = {
   services: string[];
   message: string;
   idFileName?: string | null;
+  idFileUrl?: string | null;
   status: "pending" | "approved" | "rejected";
   createdAt?: Timestamp;
 };
@@ -30,6 +32,7 @@ const VolunteerApplications = () => {
   const [statusFilter, setStatusFilter] = useState<"all" | "pending" | "approved" | "rejected">("all");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState<number>(1);
+  const [idPreview, setIdPreview] = useState<{ url: string; name: string; isPdf: boolean } | null>(null);
   const perPage = 5;
 
   useEffect(() => {
@@ -127,14 +130,14 @@ const VolunteerApplications = () => {
               return (
                 <>
                   {pageItems.map((app) => (
-              <Card key={app.id} className="border-l-4 border-l-primary">
-              <CardHeader>
-                <div className="flex items-start justify-between">
+              <Card key={app.id} className="border-l-4 border-l-primary overflow-hidden transition-shadow hover:shadow-md">
+              <CardHeader className="pb-4">
+                <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
                   <div>
                     <CardTitle className="text-xl">{app.fullName}</CardTitle>
-                    <div className="flex items-center gap-4 mt-2 text-sm text-muted-foreground">
-                      <span className="flex items-center gap-1">
-                        <Calendar className="h-4 w-4" />
+                    <div className="flex items-center gap-4 mt-1.5 text-sm text-muted-foreground">
+                      <span className="flex items-center gap-1.5">
+                        <Calendar className="h-4 w-4 shrink-0" />
                         Applied: {app.createdAt ? format(app.createdAt.toDate(), "PPP p") : "–"}
                       </span>
                     </div>
@@ -142,44 +145,81 @@ const VolunteerApplications = () => {
                   {getStatusBadge(app.status)}
                 </div>
               </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid md:grid-cols-2 gap-4">
-                  <div className="space-y-3">
-                    <div className="flex items-center gap-2">
-                      <Mail className="h-4 w-4 text-muted-foreground" />
-                      <span className="text-sm">{app.email}</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Phone className="h-4 w-4 text-muted-foreground" />
-                      <span className="text-sm">{app.phone}</span>
-                    </div>
-                    <div className="flex items-start gap-2">
-                      <MapPin className="h-4 w-4 text-muted-foreground mt-0.5" />
-                      <span className="text-sm">{app.address}</span>
-                    </div>
+              <CardContent className="pt-0">
+                <div className="flex flex-col lg:flex-row gap-8">
+                  {/* ID Document */}
+                  <div className="lg:w-52 shrink-0">
+                    <p className="text-xs font-medium text-muted-foreground mb-3 uppercase tracking-wider">ID Document</p>
+                    {app.idFileUrl ? (
+                      app.idFileName?.toLowerCase().endsWith(".pdf") ? (
+                        <button
+                          type="button"
+                          onClick={() => setIdPreview({ url: app.idFileUrl!, name: app.fullName, isPdf: true })}
+                          className="w-full aspect-video rounded-xl border-2 border-muted bg-muted/30 flex flex-col items-center justify-center gap-2 hover:border-primary/50 hover:bg-muted/50 transition-all cursor-pointer shadow-sm"
+                        >
+                          <FileText className="h-10 w-10 text-muted-foreground" />
+                          <span className="text-xs font-medium text-center px-2">PDF</span>
+                          <span className="text-[10px] text-muted-foreground">Click to view</span>
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setIdPreview({ url: app.idFileUrl!, name: app.fullName, isPdf: false })}
+                          className="block w-full aspect-video rounded-xl border-2 border-muted overflow-hidden bg-muted/20 hover:border-primary/50 transition-all group cursor-pointer text-left shadow-sm"
+                        >
+                          <img
+                            src={app.idFileUrl}
+                            alt={`ID for ${app.fullName}`}
+                            className="w-full h-full object-contain bg-muted/30 group-hover:scale-[1.02] transition-transform duration-200"
+                          />
+                          <span className="sr-only">Click to view full size</span>
+                        </button>
+                      )
+                    ) : (
+                      <div className="w-full aspect-video rounded-xl border-2 border-dashed border-muted bg-muted/20 flex flex-col items-center justify-center gap-2 text-muted-foreground">
+                        <ImageOff className="h-10 w-10 opacity-60" />
+                        <span className="text-xs text-center px-2">No ID provided</span>
+                        {app.idFileName && <span className="text-[10px]">(legacy)</span>}
+                      </div>
+                    )}
                   </div>
-                  <div className="space-y-3">
-                    <div>
-                      <p className="text-sm font-medium mb-1">Services</p>
-                      <div className="flex flex-wrap gap-2">
-                        {app.services?.length ? app.services.map((s) => (
-                          <Badge key={s} variant="secondary" className="capitalize">{s.replace("_", " ")}</Badge>
-                        )) : <span className="text-sm text-muted-foreground">None</span>}
+                  {/* Details */}
+                  <div className="flex-1 min-w-0 space-y-5">
+                    <div className="grid sm:grid-cols-2 gap-x-8 gap-y-4">
+                      <div className="space-y-3">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <Mail className="h-4 w-4 text-muted-foreground shrink-0" />
+                          <span className="text-sm truncate">{app.email}</span>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <Phone className="h-4 w-4 text-muted-foreground shrink-0" />
+                          <span className="text-sm">{app.phone}</span>
+                        </div>
+                        <div className="flex items-start gap-3">
+                          <MapPin className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
+                          <span className="text-sm">{app.address}</span>
+                        </div>
+                      </div>
+                      <div>
+                        <p className="text-xs font-medium text-muted-foreground mb-2 uppercase tracking-wider">Services</p>
+                        <div className="flex flex-wrap gap-2">
+                          {app.services?.length ? app.services.map((s) => (
+                            <Badge key={s} variant="secondary" className="capitalize text-xs">{s.replace("_", " ")}</Badge>
+                          )) : <span className="text-sm text-muted-foreground">None</span>}
+                        </div>
                       </div>
                     </div>
-                    <div>
-                      <p className="text-sm font-medium mb-1">Message</p>
-                      <p className="text-sm text-muted-foreground whitespace-pre-wrap">{app.message}</p>
-                    </div>
-                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                      <FileText className="h-4 w-4" />
-                      <span>ID Attachment: {app.idFileName ? `${app.idFileName} (placeholder)` : "Not provided"}</span>
-                    </div>
+                    {(app.message ?? "").trim() && (
+                      <div>
+                        <p className="text-xs font-medium text-muted-foreground mb-2 uppercase tracking-wider">Message</p>
+                        <p className="text-sm text-muted-foreground whitespace-pre-wrap rounded-lg bg-muted/30 px-4 py-3 border border-transparent">{app.message}</p>
+                      </div>
+                    )}
                   </div>
                 </div>
                 
                 {app.status === "pending" && (
-                  <div className="flex gap-3 pt-4">
+                  <div className="flex gap-3 pt-6 mt-6 border-t">
                     <Button onClick={() => handleApprove(app.id, app.fullName)} className="flex-1 bg-green-600 hover:bg-green-700">
                       <Check className="h-4 w-4 mr-2" /> Approve
                     </Button>
@@ -214,6 +254,31 @@ const VolunteerApplications = () => {
           </div>
         )}
       </div>
+
+      <Dialog open={!!idPreview} onOpenChange={(open) => !open && setIdPreview(null)}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-hidden flex flex-col p-0 gap-0 [&>button]:right-2 [&>button]:top-2">
+          <DialogHeader className="px-6 pt-6 pb-2">
+            <DialogTitle>ID Document — {idPreview?.name}</DialogTitle>
+          </DialogHeader>
+          <div className="flex-1 overflow-auto px-6 pb-6">
+            {idPreview && (
+              idPreview.isPdf ? (
+                <iframe
+                  src={idPreview.url}
+                  title={`ID for ${idPreview.name}`}
+                  className="w-full aspect-video min-h-[400px] rounded-lg border bg-muted"
+                />
+              ) : (
+                <img
+                  src={idPreview.url}
+                  alt={`ID for ${idPreview.name}`}
+                  className="w-full h-auto max-h-[70vh] object-contain rounded-lg"
+                />
+              )
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </AdminLayout>
   );
 };

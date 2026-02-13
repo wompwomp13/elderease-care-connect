@@ -7,6 +7,7 @@ import { db } from "@/lib/firebase";
 import { collection, onSnapshot, orderBy, query, where } from "firebase/firestore";
 import { Calendar, Clock, Star, User } from "lucide-react";
 import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "@/components/ui/pagination";
+import { cn } from "@/lib/utils";
 
 const CompanionNavbar = () => {
   const user = getCurrentUser();
@@ -42,6 +43,7 @@ const ActivityLog = () => {
   const [email, setEmail] = useState<string | null>(user?.email ?? null);
   const [assignments, setAssignments] = useState<any[] | null>(null);
   const [ratings, setRatings] = useState<Record<string, any>>({});
+  const [sortOrder, setSortOrder] = useState<"newest" | "oldest">("newest");
   const [page, setPage] = useState<number>(1);
   const perPage = 5;
 
@@ -68,6 +70,13 @@ const ActivityLog = () => {
     return () => unsub();
   }, [email]);
 
+  // Apply sort order (Firestore returns desc by default; reverse for oldest)
+  const sortedAssignments = useMemo(() => {
+    const list = assignments || [];
+    if (sortOrder === "oldest") return [...list].reverse();
+    return list;
+  }, [assignments, sortOrder]);
+
   const durationFromAssignment = (a: any) => {
     const [sh, sm] = String(a.startTime24 || "").split(":").map((x: string) => parseInt(x || "0", 10));
     const [eh, em] = String(a.endTime24 || "").split(":").map((x: string) => parseInt(x || "0", 10));
@@ -81,18 +90,37 @@ const ActivityLog = () => {
     <div className="min-h-screen bg-gradient-to-b from-background to-muted/20">
       <CompanionNavbar />
       <main className="container mx-auto px-4 py-10 max-w-5xl">
-        <h1 className="text-3xl md:text-4xl font-bold mb-6">Activity Log</h1>
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
+          <h1 className="text-3xl md:text-4xl font-bold">Activity Log</h1>
+          <div className="flex rounded-lg border bg-muted/50 p-0.5 shrink-0">
+            {(["newest", "oldest"] as const).map((order) => (
+              <button
+                key={order}
+                type="button"
+                onClick={() => { setSortOrder(order); setPage(1); }}
+                className={cn(
+                  "px-3 py-1.5 text-sm font-medium rounded-md transition-colors",
+                  sortOrder === order
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                {order === "newest" ? "Newest first" : "Oldest first"}
+              </button>
+            ))}
+          </div>
+        </div>
 
         {assignments === null ? (
           <div className="p-6 text-muted-foreground">Loading completed services…</div>
-        ) : assignments.length === 0 ? (
+        ) : sortedAssignments.length === 0 ? (
           <div className="p-6 text-muted-foreground">No completed services yet.</div>
         ) : (
           (() => {
-            const totalPages = Math.max(1, Math.ceil(assignments.length / perPage));
+            const totalPages = Math.max(1, Math.ceil(sortedAssignments.length / perPage));
             const safePage = Math.min(page, totalPages);
             const start = (safePage - 1) * perPage;
-            const pageItems = assignments.slice(start, start + perPage);
+            const pageItems = sortedAssignments.slice(start, start + perPage);
             return (
               <>
                 <div className="grid md:grid-cols-2 gap-6">

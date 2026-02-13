@@ -16,12 +16,16 @@ export type AuthProfile = {
   displayName: string | null;
   role: UserRole;
   phone?: string | null;
+  terminated?: boolean;
+  terminationReason?: string | null;
 };
 
 export type AuthUser = {
   id: string;
   name: string;
   role: UserRole;
+  terminated?: boolean;
+  terminationReason?: string | null;
 };
 
 const STORAGE_PROFILE_KEY = "elderease_auth_profile";
@@ -30,7 +34,13 @@ const setLocalProfile = (p: AuthProfile | null) => {
     localStorage.removeItem(STORAGE_PROFILE_KEY);
     return;
   }
-  const compact: AuthUser = { id: p.uid, name: p.displayName ?? p.email ?? "User", role: p.role };
+  const compact: AuthUser = {
+    id: p.uid,
+    name: p.displayName ?? p.email ?? "User",
+    role: p.role,
+    ...(p.terminated !== undefined && { terminated: p.terminated }),
+    ...(p.terminationReason !== undefined && { terminationReason: p.terminationReason }),
+  };
   localStorage.setItem(STORAGE_PROFILE_KEY, JSON.stringify(compact));
 };
 
@@ -56,13 +66,32 @@ export const getUserProfile = async (user: User): Promise<AuthProfile | null> =>
   const ref = doc(db, "users", user.uid);
   const snap = await getDoc(ref);
   if (!snap.exists()) return null;
-  const data = snap.data() as { role: UserRole; displayName?: string | null; phone?: string | null; email?: string | null };
+  const data = snap.data() as { role: UserRole; displayName?: string | null; phone?: string | null; email?: string | null; status?: string; terminationReason?: string | null };
+  let terminated = (data.status || "").toLowerCase() === "terminated";
+  let terminationReason: string | null = terminated ? (data.terminationReason ?? null) : null;
+  // Fallback: companions may have been terminated via pendingVolunteers only (e.g. before users sync)
+  if (data.role === "companion" && !terminated) {
+    const email = (user.email ?? data.email ?? "").toString().trim().toLowerCase();
+    if (email) {
+      try {
+        const q = query(collection(db, "pendingVolunteers"), where("email", "==", email), where("status", "==", "terminated"), limit(1));
+        const pvSnap = await getDocs(q);
+        if (!pvSnap.empty) {
+          terminated = true;
+          const pvData = pvSnap.docs[0].data() as any;
+          terminationReason = pvData?.terminationReason ?? null;
+        }
+      } catch {}
+    }
+  }
   return {
     uid: user.uid,
     email: user.email ?? data.email ?? null,
     displayName: user.displayName ?? data.displayName ?? null,
     role: data.role,
     phone: data.phone ?? null,
+    terminated: terminated || undefined,
+    terminationReason: terminated ? terminationReason : undefined,
   };
 };
 
@@ -108,43 +137,17 @@ export const signUpWithEmail = async (
 };
 
 export const loginWithEmail = async (email: string, password: string): Promise<AuthProfile> => {
-  // Admin can only login with pre-made credentials
   const cred = await signInWithEmailAndPassword(auth, email, password);
   const profile = await getUserProfile(cred.user);
   const normalizedEmail = (email || "").trim().toLowerCase();
-  // Block terminated volunteer accounts
-  try {
-    // Check users.status == 'terminated'
-    const userDoc = await getDoc(doc(db, "users", cred.user.uid));
-    const userData = userDoc.exists() ? userDoc.data() as any : null;
-    if ((userData?.status || "").toLowerCase() === "terminated") {
-      await signOut(auth);
-      throw new Error("Your account has been terminated. Please contact support.");
-    }
-    // Check pendingVolunteers by email for terminated
-    const qTerminated = query(
-      collection(db, "pendingVolunteers"),
-      where("email", "==", normalizedEmail),
-      where("status", "==", "terminated"),
-      limit(1),
-    );
-    const snapTerminated = await getDocs(qTerminated);
-    if (!snapTerminated.empty) {
-      await signOut(auth);
-      throw new Error("Your account has been terminated. Please contact support.");
-    }
-  } catch (e) {
-    // if rules prevent reading, we skip; otherwise propagate thrown termination error
-    if (e instanceof Error && e.message?.includes("terminated")) {
-      throw e;
-    }
-  }
+  // Allow terminated volunteers to log in – they will see a restricted view with the reason
   if (email.toLowerCase() === ADMIN_EMAIL.toLowerCase()) {
     const adminProfile = { uid: cred.user.uid, email: cred.user.email, displayName: cred.user.displayName, role: "admin" as const };
     setLocalProfile(adminProfile);
     return adminProfile;
   }
   if (!profile) throw new Error("Missing user profile. Please sign up first.");
+  // If terminated, include reason so companion pages can show restricted view
   setLocalProfile(profile);
   return profile;
 };
@@ -181,19 +184,30 @@ export const subscribeToAuth = (cb: (user: AuthProfile | null) => void) => {
         return;
       }
       const data = snap.data() as any;
-      // Auto-logout if terminated detected
-      if ((data?.status || "").toLowerCase() === "terminated") {
-        await signOut(auth);
-        setLocalProfile(null);
-        cb(null);
-        return;
+      let terminated = (data?.status || "").toLowerCase() === "terminated";
+      let terminationReason: string | null = terminated ? (data?.terminationReason ?? null) : null;
+      // Fallback: companions may have been terminated via pendingVolunteers only (e.g. before users sync)
+      if (data?.role === "companion" && !terminated) {
+        const email = (u.email ?? data?.email ?? "").toString().trim().toLowerCase();
+        if (email) {
+          try {
+            const q = query(collection(db, "pendingVolunteers"), where("email", "==", email), where("status", "==", "terminated"), limit(1));
+            const pvSnap = await getDocs(q);
+            if (!pvSnap.empty) {
+              terminated = true;
+              const pvData = pvSnap.docs[0].data() as any;
+              terminationReason = pvData?.terminationReason ?? null;
+            }
+          } catch {}
+        }
       }
       const profile: AuthProfile = {
         uid: u.uid,
-        email: u.email ?? data.email ?? null,
-        displayName: u.displayName ?? data.displayName ?? null,
-        role: data.role,
-        phone: data.phone ?? null,
+        email: u.email ?? data?.email ?? null,
+        displayName: u.displayName ?? data?.displayName ?? null,
+        role: data?.role,
+        phone: data?.phone ?? null,
+        ...(terminated && { terminated: true, terminationReason }),
       };
       setLocalProfile(profile);
       cb(profile);

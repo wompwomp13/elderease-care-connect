@@ -11,6 +11,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Button as UIButton } from "@/components/ui/button";
 import { useToast } from "@/components/ui/use-toast";
 import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "@/components/ui/pagination";
+import { cn } from "@/lib/utils";
+import { format } from "date-fns";
 
 const CompanionNavbar = () => {
   const user = getCurrentUser();
@@ -55,6 +57,7 @@ const MyAssignments = () => {
   const [updatingById, setUpdatingById] = useState<Record<string, boolean>>({});
   const [justCompletedById, setJustCompletedById] = useState<Record<string, boolean>>({});
   const [dayFilterEnabled, setDayFilterEnabled] = useState<boolean>(false);
+  const [sortOrder, setSortOrder] = useState<"newest" | "oldest">("newest");
   const [page, setPage] = useState<number>(1);
   const perPage = 5;
   const { toast } = useToast();
@@ -168,23 +171,35 @@ const MyAssignments = () => {
     });
   }, [assignments, selectedDate, dayFilterEnabled]);
 
-  // Sort: incomplete first, then by date/time ascending
+  // Get assignment "order" timestamp (createdAt or serviceDateTS fallback)
+  const getOrderMs = (a: any) => {
+    const ts = a.createdAt;
+    const createdMs = ts ? (typeof ts === "number" ? ts : ts?.toMillis?.() ?? 0) : 0;
+    const serviceMs = typeof a.serviceDateTS === "number" ? a.serviceDateTS : (a.serviceDateTS?.toMillis?.() ?? 0);
+    return createdMs || serviceMs;
+  };
+
+  // Sort: incomplete first, then by newest/oldest (createdAt)
   const sortedAssignments = useMemo(() => {
     const toMinutes = (t?: string | null) => {
       if (!t) return 0;
       const [h, m] = String(t).split(":").map((x: string) => parseInt(x || "0", 10));
       return (h * 60 + (m || 0)) | 0;
     };
+    const mult = sortOrder === "newest" ? -1 : 1;
     return [...filteredAssignments].sort((a, b) => {
       const aCompleted = a.status === "completed";
       const bCompleted = b.status === "completed";
       if (aCompleted !== bCompleted) return aCompleted ? 1 : -1;
+      const aOrder = getOrderMs(a);
+      const bOrder = getOrderMs(b);
+      if (aOrder !== bOrder) return mult * (aOrder - bOrder);
       const aDate = typeof a.serviceDateTS === "number" ? a.serviceDateTS : (a.serviceDateTS?.toMillis?.() ?? 0);
       const bDate = typeof b.serviceDateTS === "number" ? b.serviceDateTS : (b.serviceDateTS?.toMillis?.() ?? 0);
-      if (aDate !== bDate) return aDate - bDate;
-      return toMinutes(a.startTime24) - toMinutes(b.startTime24);
+      if (aDate !== bDate) return mult * (aDate - bDate);
+      return mult * (toMinutes(a.startTime24) - toMinutes(b.startTime24));
     });
-  }, [filteredAssignments]);
+  }, [filteredAssignments, sortOrder]);
 
   // Pagination
   const totalPages = Math.max(1, Math.ceil(sortedAssignments.length / perPage));
@@ -193,7 +208,7 @@ const MyAssignments = () => {
     const start = (safePage - 1) * perPage;
     return sortedAssignments.slice(start, start + perPage);
   }, [sortedAssignments, safePage]);
-  useEffect(() => { setPage(1); }, [dayFilterEnabled, selectedDate, assignments?.length]);
+  useEffect(() => { setPage(1); }, [dayFilterEnabled, selectedDate, assignments?.length, sortOrder]);
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-background to-muted/20 relative overflow-hidden">
@@ -205,8 +220,29 @@ const MyAssignments = () => {
 
       <main className="container mx-auto px-4 py-10 max-w-6xl">
         <div className="mb-8">
-          <h1 className="text-3xl md:text-4xl font-bold mb-1">My Assignments</h1>
-          <p className="text-muted-foreground">A friendly overview of your upcoming visits and tasks.</p>
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div>
+              <h1 className="text-3xl md:text-4xl font-bold mb-1">My Assignments</h1>
+              <p className="text-muted-foreground">A friendly overview of your upcoming visits and tasks.</p>
+            </div>
+            <div className="flex rounded-lg border bg-muted/50 p-0.5 shrink-0">
+              {(["newest", "oldest"] as const).map((order) => (
+                <button
+                  key={order}
+                  type="button"
+                  onClick={() => setSortOrder(order)}
+                  className={cn(
+                    "px-3 py-1.5 text-sm font-medium rounded-md transition-colors",
+                    sortOrder === order
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  {order === "newest" ? "Newest first" : "Oldest first"}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
 
         <div className="grid lg:grid-cols-3 gap-6">
@@ -227,7 +263,15 @@ const MyAssignments = () => {
                         </div>
                         <div>
                           <p className="text-lg font-semibold">{Array.isArray(a.services) ? a.services.join(", ") : a.services}</p>
-                          <p className="text-sm text-muted-foreground flex items-center gap-2"><Calendar className="h-4 w-4" /> {a.startTimeText} • {a.endTimeText}</p>
+                          <p className="text-sm text-muted-foreground flex items-center gap-2">
+                            <Calendar className="h-4 w-4" />
+                            {(() => {
+                              const ms = typeof a.serviceDateTS === "number" ? a.serviceDateTS : (a.serviceDateTS?.toMillis?.() ?? 0);
+                              return ms ? format(ms, "EEE, MMM d, yyyy") : "—";
+                            })()}
+                            {" • "}
+                            {a.startTimeText} – {a.endTimeText}
+                          </p>
                           <p className="text-sm text-muted-foreground flex items-center gap-2"><MapPin className="h-4 w-4" /> {a.address || "—"}</p>
                         </div>
                       </div>

@@ -16,7 +16,7 @@ import TimeRangePicker from "@/components/ui/time-range-picker";
 import ElderChatbot from "@/components/elder/ElderChatbot";
 import { format12h, isEndAfterStart } from "@/lib/time";
 import { db } from "@/lib/firebase";
-import { addDoc, collection, onSnapshot, query, serverTimestamp, where } from "firebase/firestore";
+import { addDoc, collection, getDocs, onSnapshot, query, serverTimestamp, where } from "firebase/firestore";
 
 const ElderNavbar = () => {
   const user = getCurrentUser();
@@ -116,6 +116,34 @@ const RequestService = () => {
   const [preferredVolunteerName, setPreferredVolunteerName] = useState<string | null>(null);
   const [busyByEmail, setBusyByEmail] = useState<Record<string, Array<[number, number]>>>({}); // for selected date only
   const [busyLoading, setBusyLoading] = useState<boolean>(false);
+
+  // Pre-fill client info from most recent request when user has history (scoped to this account only)
+  useEffect(() => {
+    const uid = user?.id;
+    if (!uid) return;
+    (async () => {
+      try {
+        const q = query(collection(db, "serviceRequests"), where("userId", "==", uid));
+        const snap = await getDocs(q);
+        if (snap.empty) return;
+        const docs = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
+        const getCreatedMs = (r: any) => {
+          const ts = r.createdAt;
+          return ts ? (typeof ts === "number" ? ts : ts?.toMillis?.() ?? 0) : 0;
+        };
+        docs.sort((a, b) => getCreatedMs(b) - getCreatedMs(a));
+        const latest = docs[0];
+        // Ensure we only use data from this logged-in account (userId = auth UID)
+        if (latest?.userId !== uid) return;
+        if (latest?.elderFamilyName != null) setFamilyName(String(latest.elderFamilyName).trim());
+        if (latest?.elderFirstName != null) setFirstName(String(latest.elderFirstName).trim());
+        if (latest?.elderMiddleName != null) setMiddleName(String(latest.elderMiddleName).trim());
+        if (latest?.elderAge != null) setClientAge(String(latest.elderAge).trim());
+        if (latest?.elderGender != null) setGender(String(latest.elderGender).trim());
+        if (latest?.address != null) setClientAddress(String(latest.address).trim());
+      } catch {}
+    })();
+  }, [user?.id]);
 
   const getTotalSelectedHours = (): number => {
     return selectedServices.reduce((sum, id) => sum + (Number(serviceHoursById[id]) || 0), 0);

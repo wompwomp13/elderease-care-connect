@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import logo from "@/assets/logo.png";
 import nurseImg from "@/assets/volunteer-nurse.png";
 import courierImg from "@/assets/volunteer-courier.jpg";
@@ -83,16 +84,42 @@ const MySchedule = () => {
   const upcoming = useMemo(() => (assignments || []).filter(a => a.status !== "completed"), [assignments]);
   const needsConfirm = useMemo(() => (assignments || []).filter(a => a.status === "completed" && !a.guardianConfirmed), [assignments]);
   const completed = useMemo(() => (assignments || []).filter(a => a.status === "completed" || a.guardianConfirmed), [assignments]);
+
+  const toStartTimestamp = (a: any): number => {
+    const day = typeof a.serviceDateTS === "number" ? a.serviceDateTS : (a.serviceDateTS?.toMillis?.() ?? 0);
+    if (!day) return 0;
+    const t = String(a.startTime24 || "");
+    const [h, m] = t.split(":").map((x: string) => parseInt(x || "0", 10));
+    const minutes = (Number.isFinite(h) ? h : 0) * 60 + (Number.isFinite(m) ? m : 0);
+    return day + minutes * 60 * 1000;
+  };
+
+  const upcomingSorted = useMemo(() => {
+    const list = upcoming.slice();
+    list.sort((a, b) => toStartTimestamp(a) - toStartTimestamp(b));
+    return list;
+  }, [upcoming]);
+
+  const [completedSort, setCompletedSort] = useState<"desc" | "asc">("desc");
+
   const filteredCompleted = useMemo(() => {
     const term = appliedSearch.trim().toLowerCase();
-    if (!term) return completed;
-    return completed.filter((a) => {
-      const services = Array.isArray(a.services) ? a.services.join(", ") : (a.services ?? "");
-      const volunteer = a.volunteerName ?? "";
-      const date = a.serviceDateTS ? new Date(a.serviceDateTS).toLocaleDateString() : "";
-      return [services, volunteer, date].some((v) => String(v).toLowerCase().includes(term));
+    let list = completed.slice();
+    if (term) {
+      list = list.filter((a) => {
+        const services = Array.isArray(a.services) ? a.services.join(", ") : (a.services ?? "");
+        const volunteer = a.volunteerName ?? "";
+        const date = a.serviceDateTS ? new Date(a.serviceDateTS).toLocaleDateString() : "";
+        return [services, volunteer, date].some((v) => String(v).toLowerCase().includes(term));
+      });
+    }
+    list.sort((a, b) => {
+      const ta = toStartTimestamp(a);
+      const tb = toStartTimestamp(b);
+      return completedSort === "desc" ? tb - ta : ta - tb;
     });
-  }, [completed, appliedSearch]);
+    return list;
+  }, [completed, appliedSearch, completedSort]);
 
   // Pagination for completed services
   const pageSize = 5;
@@ -157,7 +184,7 @@ const MySchedule = () => {
               </div>
             )}
 
-            {upcoming.map((a) => (
+            {upcomingSorted.map((a) => (
               <Card key={a.id} className="overflow-hidden hover:shadow-md transition-all">
                 <div className="p-5 flex items-start gap-4">
                   <div className="h-14 w-14 rounded-full bg-primary/10 grid place-items-center flex-shrink-0">
@@ -189,14 +216,31 @@ const MySchedule = () => {
         {/* Completed Services - Tabular with search */}
         <div className="mt-10">
           <h2 className="text-2xl font-bold mb-3">Completed Services</h2>
-          <div className="flex items-center gap-2 mb-4">
-            <Input
-              value={searchText}
-              onChange={(e) => setSearchText(e.target.value)}
-              placeholder="Search by service, volunteer, or date"
-              className="max-w-sm"
-            />
-            <Button variant="outline" onClick={() => setAppliedSearch(searchText)}>Search</Button>
+          <div className="flex flex-col sm:flex-row sm:items-center gap-4 mb-4">
+            <div className="flex-1 flex items-center gap-2">
+              <Input
+                value={searchText}
+                onChange={(e) => setSearchText(e.target.value)}
+                placeholder="Search by service, volunteer, or date"
+                className="max-w-sm"
+              />
+              <Button variant="outline" onClick={() => setAppliedSearch(searchText)}>Search</Button>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-muted-foreground">Sort by</span>
+              <Select
+                value={completedSort}
+                onValueChange={(v: "desc" | "asc") => setCompletedSort(v)}
+              >
+                <SelectTrigger className="w-40 h-9">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="desc">Newest first</SelectItem>
+                  <SelectItem value="asc">Oldest first</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </div>
           <Card>
             <CardContent className="p-0">

@@ -2,13 +2,20 @@ import { useEffect, useMemo, useState } from "react";
 import AdminLayout from "@/components/layout/AdminLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Users, ClipboardList, Star, Award, ChevronRight, ArrowUpRight, ArrowDownRight, User as UserIcon } from "lucide-react";
+import { Users, ClipboardList, Star, Award, ChevronRight, ArrowUpRight, ArrowDownRight, User as UserIcon, Lightbulb } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line } from "recharts";
 import { collection, onSnapshot, query, where } from "firebase/firestore";
 import { db } from "@/lib/firebase";
+import { cn } from "@/lib/utils";
+
+type ServicePeriodFilter = "weekly" | "monthly" | "yearly";
+type PendingRangeFilter = "from_2025" | "2025" | "2026";
 
 const Dashboard = () => {
   const [expandedVolunteer, setExpandedVolunteer] = useState<string | null>(null);
+  const [servicePeriodFilter, setServicePeriodFilter] = useState<ServicePeriodFilter>("monthly");
+  const [pendingRangeFilter, setPendingRangeFilter] = useState<PendingRangeFilter>("from_2025");
+  const [cancelPeriodFilter, setCancelPeriodFilter] = useState<ServicePeriodFilter>("monthly");
 
   // Live collections
   const [requests, setRequests] = useState<any[] | null>(null);
@@ -98,6 +105,93 @@ const Dashboard = () => {
     return map;
   }, [requests]);
 
+  const getRequestCreatedMs = (r: any): number => {
+    const ts = r.createdAt;
+    if (!ts) return 0;
+    return typeof ts === "number" ? ts : (ts?.toMillis?.() ?? 0);
+  };
+
+  const getCancelledMs = (r: any): number => {
+    const ts = r.cancelledAt ?? r.createdAt;
+    if (!ts) return 0;
+    return typeof ts === "number" ? ts : (ts?.toMillis?.() ?? 0);
+  };
+
+  const REASON_LABELS: Record<string, string> = {
+    schedule_change: "Schedule changed",
+    price_high: "Price too high",
+    preferred_unavailable: "Preferred volunteer unavailable",
+    entered_wrong_info: "Entered wrong information",
+    other: "Other",
+  };
+
+  const cancellationAnalytics = useMemo(() => {
+    const nowMs = Date.now();
+    const periodMs =
+      cancelPeriodFilter === "weekly"
+        ? 7 * 24 * 60 * 60 * 1000
+        : cancelPeriodFilter === "monthly"
+          ? 30 * 24 * 60 * 60 * 1000
+          : 365 * 24 * 60 * 60 * 1000;
+    const cutoffMs = nowMs - periodMs;
+
+    const cancelledInPeriod = (requests || []).filter((r) => {
+      if (r.status !== "cancelled") return false;
+      return getCancelledMs(r) >= cutoffMs;
+    });
+    const totalInPeriod = (requests || []).filter((r) => getRequestCreatedMs(r) >= cutoffMs).length;
+    const rate = totalInPeriod > 0 ? Math.round((cancelledInPeriod.length / totalInPeriod) * 1000) / 10 : 0;
+    const reasonCounts: Record<string, number> = {};
+    cancelledInPeriod.forEach((r) => {
+      const code = r.cancelReasonCode || "other";
+      reasonCounts[code] = (reasonCounts[code] || 0) + 1;
+    });
+    const totalCancelled = cancelledInPeriod.length;
+    const reasonData = Object.entries(reasonCounts)
+      .sort((a, b) => b[1] - a[1])
+      .map(([code, count]) => ({
+        name: REASON_LABELS[code] || code,
+        value: count,
+        percentage: totalCancelled > 0 ? Math.round((count / totalCancelled) * 1000) / 10 : 0,
+      }));
+
+    const months: { month: string; cancelled: number; key: string }[] = [];
+    const cur = new Date();
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(cur.getFullYear(), cur.getMonth() - i, 1);
+      const key = `${d.getFullYear()}-${d.getMonth()}`;
+      months.push({ month: d.toLocaleString(undefined, { month: "short", year: "2-digit" }), cancelled: 0, key });
+    }
+    cancelledInPeriod.forEach((r) => {
+      const ms = getCancelledMs(r);
+      if (!ms) return;
+      const d = new Date(ms);
+      const key = `${d.getFullYear()}-${d.getMonth()}`;
+      const idx = months.findIndex((m) => m.key === key);
+      if (idx >= 0) months[idx].cancelled += 1;
+    });
+
+    const topReason = reasonData[0];
+    const insights: string[] = [];
+    if (rate > 15) insights.push(`Cancellation rate is above 15% — consider reviewing scheduling or pricing flow.`);
+    if (topReason && topReason.name === "Schedule changed") insights.push(`"Schedule changed" is the top reason — flexible rescheduling options may help.`);
+    if (topReason && topReason.name === "Preferred volunteer unavailable") insights.push(`Preferred volunteer availability gaps — consider broadening recommendations.`);
+    if (topReason && topReason.name === "Price too high") insights.push(`Price sensitivity noted — dynamic pricing or discounts could improve conversion.`);
+    if (topReason && topReason.name === "Entered wrong information") insights.push(`Data entry errors — consider simplifying the form or adding validation.`);
+    if (totalCancelled === 0 && totalInPeriod > 0) insights.push(`No cancellations in this period — retention looks strong.`);
+    if (totalCancelled > 0 && insights.length === 0) insights.push(`Review cancellation patterns to identify improvement opportunities.`);
+
+    return {
+      total: cancelledInPeriod.length,
+      rate,
+      totalInPeriod,
+      reasonData,
+      chartData: months.map(({ month, cancelled }) => ({ month, cancelled })),
+      topReason,
+      insights,
+    };
+  }, [requests, cancelPeriodFilter]);
+
   const now = new Date();
   const weekAgoMs = now.getTime() - 6 * 24 * 60 * 60 * 1000;
   const isCompletedConfirmed = (a: any) => a.status === "completed" && a.guardianConfirmed === true;
@@ -107,11 +201,13 @@ const Dashboard = () => {
   };
   const completedThisWeek = (assignments || []).filter((a) => isCompletedConfirmed(a) && getDateMs(a) >= weekAgoMs).length;
 
+  const pendingPercentage = totalRequests > 0 ? Math.round((pendingRequests / totalRequests) * 1000) / 10 : 0;
+
   const stats = [
     { title: "Total Service Requests", value: String(totalRequests), icon: ClipboardList, change: "", trend: "up", color: "from-emerald-500 to-emerald-600", subtitle: "live" },
     { title: "Active Volunteers", value: String(activeVolunteers), icon: Users, change: "", trend: "up", color: "from-blue-500 to-blue-600", subtitle: "approved" },
     { title: "Completed This Week", value: String(completedThisWeek), icon: Star, change: "", trend: "up", color: "from-purple-500 to-purple-600", subtitle: "confirmed" },
-    { title: "Pending Requests", value: String(pendingRequests), icon: ClipboardList, change: "", trend: "up", color: "from-orange-500 to-orange-600", subtitle: "awaiting assignment" },
+    { title: "Pending Requests", value: String(pendingRequests), icon: ClipboardList, change: `${pendingPercentage}%`, trend: "up", color: "from-orange-500 to-orange-600", subtitle: "of total • awaiting assignment" },
   ];
 
   // Weekly activity (last 7 days)
@@ -212,10 +308,66 @@ const Dashboard = () => {
     }
   };
 
-  // Most requested services (live from serviceRequests)
+  // Range Pending: pending requests from 2025 to recent, with filters
+  const rangePendingData = useMemo(() => {
+    const now = new Date();
+    let startDate: Date;
+    let endDate: Date;
+    if (pendingRangeFilter === "from_2025") {
+      startDate = new Date(2025, 0, 1);
+      endDate = new Date(now);
+    } else if (pendingRangeFilter === "2025") {
+      startDate = new Date(2025, 0, 1);
+      endDate = new Date(2025, 11, 31, 23, 59, 59);
+    } else {
+      // 2026
+      startDate = new Date(2026, 0, 1);
+      endDate = new Date(now);
+    }
+    const startMs = startDate.getTime();
+    const endMs = endDate.getTime();
+
+    const pendingInRange = (requests || []).filter((r) => {
+      if ((r.status || "pending") !== "pending") return false;
+      const ms = getRequestCreatedMs(r);
+      return ms >= startMs && ms <= endMs;
+    });
+
+    const months: { month: string; pending: number; key: string }[] = [];
+    const cur = new Date(startDate);
+    while (cur <= endDate) {
+      const key = `${cur.getFullYear()}-${cur.getMonth()}`;
+      months.push({ month: cur.toLocaleString(undefined, { month: "short", year: "2-digit" }), pending: 0, key });
+      cur.setMonth(cur.getMonth() + 1);
+    }
+
+    pendingInRange.forEach((r) => {
+      const ms = getRequestCreatedMs(r);
+      if (!ms) return;
+      const d = new Date(ms);
+      const key = `${d.getFullYear()}-${d.getMonth()}`;
+      const idx = months.findIndex((m) => m.key === key);
+      if (idx >= 0) months[idx].pending += 1;
+    });
+
+    return { total: pendingInRange.length, chartData: months.map(({ month, pending }) => ({ month, pending })) };
+  }, [requests, pendingRangeFilter]);
+
+  // Most requested services (live from serviceRequests, filtered by period)
   const topServices = useMemo(() => {
+    const nowMs = Date.now();
+    const periodMs =
+      servicePeriodFilter === "weekly"
+        ? 7 * 24 * 60 * 60 * 1000
+        : servicePeriodFilter === "monthly"
+          ? 30 * 24 * 60 * 60 * 1000
+          : 365 * 24 * 60 * 60 * 1000;
+    const cutoffMs = nowMs - periodMs;
+
     const counts: Record<string, number> = {};
     (requests || []).forEach((r) => {
+      const createdMs = getRequestCreatedMs(r);
+      if (createdMs < cutoffMs) return; // exclude requests outside selected period
       const arr: string[] = Array.isArray(r.services) ? r.services : (r.service ? [r.service] : []);
       arr.forEach((s) => {
         const id = toServiceId(s);
@@ -226,7 +378,7 @@ const Dashboard = () => {
     const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
     const total = entries.reduce((acc, [, n]) => acc + n, 0) || 1;
     return entries.map(([id, n]) => ({ name: toDisplayName(id), requests: n, percentage: Math.round((n / total) * 1000) / 10 }));
-  }, [requests]);
+  }, [requests, servicePeriodFilter]);
 
 
   
@@ -269,14 +421,106 @@ const Dashboard = () => {
           ))}
         </div>
 
+        {/* Range Pending - Pending requests from 2025 to recent with filters */}
+        <Card className="shadow-lg border-0">
+          <CardHeader className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div>
+              <CardTitle className="text-lg">Range Pending</CardTitle>
+              <p className="text-sm text-muted-foreground">
+                Pending requests by creation date from 2025 to recent
+              </p>
+            </div>
+            <div className="flex shrink-0 rounded-lg border bg-muted/50 p-0.5">
+              {[
+                { value: "from_2025" as const, label: "From 2025" },
+                { value: "2025" as const, label: "2025" },
+                { value: "2026" as const, label: "2026" },
+              ].map(({ value, label }) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setPendingRangeFilter(value)}
+                  className={cn(
+                    "px-3 py-1.5 text-sm font-medium rounded-md transition-colors",
+                    pendingRangeFilter === value
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-6 sm:grid-cols-[auto_1fr]">
+              <div className="rounded-xl border p-4 bg-orange-50/60 dark:bg-orange-500/10 min-w-[140px]">
+                <div className="text-xs text-muted-foreground mb-1">Pending in range</div>
+                <div className="text-2xl font-bold">{rangePendingData.total}</div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {rangePendingData.total > 0 && totalRequests > 0
+                    ? `${Math.round((rangePendingData.total / totalRequests) * 1000) / 10}% of all requests`
+                    : "No pending in range"}
+                </p>
+              </div>
+              <div className="min-h-[200px]">
+                <ResponsiveContainer width="100%" height={200}>
+                  <BarChart data={rangePendingData.chartData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                    <XAxis dataKey="month" stroke="hsl(var(--muted-foreground))" fontSize={11} />
+                    <YAxis stroke="hsl(var(--muted-foreground))" fontSize={11} />
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: "hsl(var(--card))",
+                        border: "1px solid hsl(var(--border))",
+                        borderRadius: "8px",
+                      }}
+                    />
+                    <Bar dataKey="pending" fill="hsl(var(--primary))" name="Pending" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
         {/* Most Requested Services */}
         <Card className="shadow-lg border-0">
-          <CardHeader>
-            <CardTitle className="text-lg">Most Requested Services</CardTitle>
-            <p className="text-sm text-muted-foreground">Distribution of service types</p>
+          <CardHeader className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div>
+              <CardTitle className="text-lg">Most Requested Services</CardTitle>
+              <p className="text-sm text-muted-foreground">
+                Distribution of service types
+                {servicePeriodFilter === "weekly" && " • Last 7 days"}
+                {servicePeriodFilter === "monthly" && " • Last 30 days"}
+                {servicePeriodFilter === "yearly" && " • Last 12 months"}
+              </p>
+            </div>
+            <div className="flex shrink-0 rounded-lg border bg-muted/50 p-0.5">
+              {(["weekly", "monthly", "yearly"] as const).map((period) => (
+                <button
+                  key={period}
+                  type="button"
+                  onClick={() => setServicePeriodFilter(period)}
+                  className={cn(
+                    "px-3 py-1.5 text-sm font-medium rounded-md transition-colors",
+                    servicePeriodFilter === period
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  {period.charAt(0).toUpperCase() + period.slice(1)}
+                </button>
+              ))}
+            </div>
           </CardHeader>
           <CardContent className="space-y-4">
-            {topServices.map((service) => (
+            {topServices.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-6">
+                No service requests in the selected period.
+              </p>
+            ) : (
+            topServices.map((service) => (
               <div key={service.name} className="space-y-2">
                 <div className="flex justify-between text-sm">
                   <span className="font-medium">{service.name}</span>
@@ -289,7 +533,8 @@ const Dashboard = () => {
                   />
                 </div>
               </div>
-            ))}
+            ))
+            )}
           </CardContent>
         </Card>
 
@@ -497,39 +742,125 @@ const Dashboard = () => {
           </div>
         </div>
 
-        {/* Cancellations (moved here) */}
+        {/* Cancellations Data Analytics */}
         <Card className="shadow-lg border-0">
-          <CardHeader>
-            <CardTitle className="text-lg">Cancellations</CardTitle>
-            <p className="text-sm text-muted-foreground">Guardian-initiated cancellations and reasons</p>
-          </CardHeader>
-          <CardContent>
-            <div className="grid sm:grid-cols-3 gap-4">
-              <div className="rounded-xl border p-4 bg-red-50/60 dark:bg-red-500/5">
-                <div className="text-xs text-muted-foreground mb-1">Total cancelled</div>
-                <div className="text-2xl font-bold">{cancelledRequests}</div>
-              </div>
-              <div className="sm:col-span-2 rounded-xl border p-4 bg-muted/40">
-                <div className="text-xs text-muted-foreground mb-2">Top reasons</div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
-                  {Object.entries(cancelReasons).length === 0 ? (
-                    <div className="text-muted-foreground text-sm">No cancellations yet.</div>
-                  ) : (
-                    Object.entries(cancelReasons)
-                      .sort((a, b) => b[1] - a[1])
-                      .slice(0, 4)
-                      .map(([code, count]) => (
-                        <div key={code} className="flex items-center justify-between">
-                          <span className="text-muted-foreground">
-                            {({ schedule_change: "Schedule changed", price_high: "Price too high", preferred_unavailable: "Preferred volunteer unavailable", entered_wrong_info: "Entered wrong information", other: "Other" } as Record<string,string>)[code] || code}
-                          </span>
-                          <span className="font-medium">{count}</span>
-                        </div>
-                      ))
+          <CardHeader className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div>
+              <CardTitle className="text-lg">Cancellations Data Analytics</CardTitle>
+              <p className="text-sm text-muted-foreground">Guardian-initiated cancellations with insights and trends</p>
+            </div>
+            <div className="flex shrink-0 rounded-lg border bg-muted/50 p-0.5">
+              {(["weekly", "monthly", "yearly"] as const).map((period) => (
+                <button
+                  key={period}
+                  type="button"
+                  onClick={() => setCancelPeriodFilter(period)}
+                  className={cn(
+                    "px-3 py-1.5 text-sm font-medium rounded-md transition-colors",
+                    cancelPeriodFilter === period
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
                   )}
+                >
+                  {period.charAt(0).toUpperCase() + period.slice(1)}
+                </button>
+              ))}
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            {/* Metrics grid */}
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="rounded-xl border p-4 bg-red-50/60 dark:bg-red-500/10">
+                <div className="text-xs font-medium text-muted-foreground mb-1">Cancelled in period</div>
+                <div className="text-2xl font-bold">{cancellationAnalytics.total}</div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {cancellationAnalytics.totalInPeriod} total requests in range
+                </p>
+              </div>
+              <div className="rounded-xl border p-4 bg-amber-50/60 dark:bg-amber-500/10">
+                <div className="text-xs font-medium text-muted-foreground mb-1">Cancellation rate</div>
+                <div className="text-2xl font-bold">{cancellationAnalytics.rate}%</div>
+                <p className="text-xs text-muted-foreground mt-1">of requests cancelled</p>
+              </div>
+              <div className="rounded-xl border p-4 bg-muted/40">
+                <div className="text-xs font-medium text-muted-foreground mb-1">Total (all time)</div>
+                <div className="text-2xl font-bold">{cancelledRequests}</div>
+                <p className="text-xs text-muted-foreground mt-1">cumulative cancellations</p>
+              </div>
+              <div className="rounded-xl border p-4 bg-muted/40">
+                <div className="text-xs font-medium text-muted-foreground mb-1">Top reason</div>
+                <div className="text-lg font-bold truncate">
+                  {cancellationAnalytics.topReason
+                    ? `${cancellationAnalytics.topReason.name} (${cancellationAnalytics.topReason.percentage}%)`
+                    : "—"}
                 </div>
               </div>
             </div>
+
+            <div className="grid gap-6 lg:grid-cols-2">
+              {/* Reasons breakdown */}
+              <div className="rounded-xl border p-4 bg-muted/30">
+                <h4 className="text-sm font-medium mb-4">Cancellation reasons</h4>
+                {cancellationAnalytics.reasonData.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No cancellations in this period.</p>
+                ) : (
+                  <div className="space-y-3">
+                    {cancellationAnalytics.reasonData.map((r) => (
+                      <div key={r.name} className="space-y-1.5">
+                        <div className="flex justify-between text-sm">
+                          <span className="font-medium">{r.name}</span>
+                          <span className="text-muted-foreground">{r.value} ({r.percentage}%)</span>
+                        </div>
+                        <div className="w-full bg-muted rounded-full h-2">
+                          <div
+                            className="bg-red-500/70 rounded-full h-2 transition-all"
+                            style={{ width: `${r.percentage}%` }}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Monthly trend chart */}
+              <div className="rounded-xl border p-4 bg-muted/30">
+                <h4 className="text-sm font-medium mb-4">Cancellations over time (last 6 months)</h4>
+                <ResponsiveContainer width="100%" height={180}>
+                  <BarChart data={cancellationAnalytics.chartData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                    <XAxis dataKey="month" stroke="hsl(var(--muted-foreground))" fontSize={11} />
+                    <YAxis stroke="hsl(var(--muted-foreground))" fontSize={11} />
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: "hsl(var(--card))",
+                        border: "1px solid hsl(var(--border))",
+                        borderRadius: "8px",
+                      }}
+                    />
+                    <Bar dataKey="cancelled" fill="hsl(var(--destructive))" name="Cancelled" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            {/* Insights */}
+            {cancellationAnalytics.insights.length > 0 && (
+              <div className="rounded-xl border border-amber-200/50 bg-amber-50/50 dark:bg-amber-500/5 dark:border-amber-500/20 p-4">
+                <h4 className="text-sm font-medium flex items-center gap-2 mb-2">
+                  <Lightbulb className="h-4 w-4 text-amber-600" />
+                  Insights
+                </h4>
+                <ul className="space-y-1.5 text-sm text-muted-foreground">
+                  {cancellationAnalytics.insights.map((insight, i) => (
+                    <li key={i} className="flex items-start gap-2">
+                      <span className="text-amber-600 mt-0.5">•</span>
+                      <span>{insight}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </CardContent>
         </Card>
 

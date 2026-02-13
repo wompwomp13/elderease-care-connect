@@ -71,7 +71,7 @@ const knowledgeBase = [
     id: "dynamic-pricing",
     tags: ["price", "pricing", "cost", "dynamic pricing", "rates"],
     content:
-      "On the Browse Services page, ElderEase shows transparent pricing with notes about demand. Example hourly prices include: Companionship around $25/hour, Light Housekeeping around $30/hour, Running Errands around $35/hour, Home Visits around $28/hour, and Socialization Activities around $32/hour. A pricing banner explains that prices adjust based on real-time demand to ensure availability and fair compensation, and that booking during low-demand periods can offer better rates.",
+      "On ElderEase, pricing is shown transparently on the Browse Services and Request Service pages. Base hourly rates are set per service in Philippine pesos (PHP), for example: Companionship, Light Housekeeping, Running Errands, and Home Visits each have a clear per-hour rate. When a guardian submits a request, ElderEase calculates a receipt using: the selected services, the number of hours per service, a small 5% service fee, and a dynamic pricing adjustment that can increase the effective rate slightly when demand is high or when a volunteer has a very strong performance record. The final total, together with any dynamic pricing tier, is shown in the receipt that appears in Notifications.",
   },
   {
     id: "how-to-request-service",
