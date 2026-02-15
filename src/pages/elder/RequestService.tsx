@@ -14,6 +14,7 @@ import { toast } from "@/hooks/use-toast";
 import { format } from "date-fns";
 import TimeRangePicker from "@/components/ui/time-range-picker";
 import ElderChatbot from "@/components/elder/ElderChatbot";
+import { VolunteerAvatar } from "@/components/VolunteerAvatar";
 import { format12h, isEndAfterStart } from "@/lib/time";
 import { db } from "@/lib/firebase";
 import { addDoc, collection, getDocs, onSnapshot, query, serverTimestamp, where } from "firebase/firestore";
@@ -659,27 +660,36 @@ const RequestService = () => {
               </CardHeader>
               <CardContent className="space-y-3">
                 {(() => {
+                  const ANY_VOLUNTEER = "__any__";
                   const selected = enrichedVolunteers.find((x) => (x.email || "").toLowerCase() === (preferredVolunteerEmail || ""));
                   const selectedLabel = selected
                     ? `${selected.fullName || selected.email}`
-                    : "";
+                    : "Any volunteer (no preference)";
                   return (
                     <div className="space-y-2">
                       <Label className="text-sm mb-1 block">Preferred Volunteer</Label>
                       <Select
-                        value={preferredVolunteerEmail || ""}
+                        value={preferredVolunteerEmail || ANY_VOLUNTEER}
                         onValueChange={(val) => {
-                          setPreferredVolunteerEmail(val || null);
-                          const v = enrichedVolunteers.find((x) => (x.email || "").toLowerCase() === val);
-                          setPreferredVolunteerName(v?.fullName || null);
+                          if (val === ANY_VOLUNTEER) {
+                            setPreferredVolunteerEmail(null);
+                            setPreferredVolunteerName(null);
+                          } else {
+                            setPreferredVolunteerEmail(val || null);
+                            const v = enrichedVolunteers.find((x) => (x.email || "").toLowerCase() === val);
+                            setPreferredVolunteerName(v?.fullName || null);
+                          }
                         }}
                       >
                         <SelectTrigger className="h-11">
                           <span className="truncate">
-                            {selected ? selectedLabel : (enrichedVolunteers.length ? "Choose a volunteer" : "Loading volunteers...")}
+                            {selected ? selected.fullName || selected.email : (enrichedVolunteers.length ? selectedLabel : "Loading volunteers...")}
                           </span>
                         </SelectTrigger>
                         <SelectContent className="max-h-96 p-0">
+                          <SelectItem value={ANY_VOLUNTEER} className="py-2">
+                            <span className="text-muted-foreground italic">Any volunteer (no preference)</span>
+                          </SelectItem>
                           {enrichedVolunteers.map((v) => {
                             const email = (v.email || "").toLowerCase();
                             const rating = typeof v.rating === "number" ? v.rating.toFixed(1) : "—";
@@ -687,14 +697,17 @@ const RequestService = () => {
                             const availabilityLabel = v.available == null ? "Pick date & time to check" : (v.available ? "Available" : "Unavailable");
                             return (
                               <SelectItem key={email} value={email} className="py-2">
-                                <div className="flex flex-col gap-0.5">
-                                  <span className="font-medium leading-tight">{v.fullName || v.email}</span>
+                                <div className="flex items-center gap-2">
+                                  <VolunteerAvatar profilePhotoUrl={v.profilePhotoUrl} name={v.fullName} size="sm" />
+                                  <div className="flex flex-col gap-0.5">
+                                    <span className="font-medium leading-tight">{v.fullName || v.email}</span>
                                   {v.email && <span className="text-xs text-muted-foreground">{v.email}</span>}
                                   <div className="text-xs text-muted-foreground">
                                     Rating: {rating} • Tasks: {tasks}
                                   </div>
-                                  <div className={`text-xs ${v.available === false ? "text-destructive" : "text-emerald-600"}`}>
-                                    {availabilityLabel}
+                                    <div className={`text-xs ${v.available === false ? "text-destructive" : "text-emerald-600"}`}>
+                                      {availabilityLabel}
+                                    </div>
                                   </div>
                                 </div>
                               </SelectItem>
@@ -705,18 +718,21 @@ const RequestService = () => {
 
                       {selected && (
                         <div className="rounded-lg border bg-muted/40 p-3">
-                          <div className="flex items-center justify-between">
-                            <div>
-                              <p className="font-medium leading-tight">{selected.fullName || selected.email}</p>
-                              {selected.email && <p className="text-xs text-muted-foreground">{selected.email}</p>}
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="flex items-center gap-3 min-w-0">
+                              <VolunteerAvatar profilePhotoUrl={selected.profilePhotoUrl} name={selected.fullName} size="md" />
+                              <div>
+                                <p className="font-medium leading-tight">{selected.fullName || selected.email}</p>
+                                {selected.email && <p className="text-xs text-muted-foreground">{selected.email}</p>}
+                                <p className="mt-1 text-xs text-muted-foreground">
+                                  Rating: {typeof selected.rating === "number" ? selected.rating.toFixed(1) : "—"} • Tasks: {selected.tasksCompleted ?? 0}
+                                </p>
+                              </div>
                             </div>
-                            <span className={`text-xs px-2 py-1 rounded-full ${selected.available === false ? "bg-destructive/10 text-destructive" : "bg-emerald-500/10 text-emerald-700"}`}>
+                            <span className={`text-xs px-2 py-1 rounded-full shrink-0 ${selected.available === false ? "bg-destructive/10 text-destructive" : "bg-emerald-500/10 text-emerald-700"}`}>
                               {selected.available == null ? "Pick date & time" : selected.available ? "Available" : "Unavailable"}
                             </span>
                           </div>
-                          <p className="mt-1 text-xs text-muted-foreground">
-                            Rating: {typeof selected.rating === "number" ? selected.rating.toFixed(1) : "—"} • Tasks: {selected.tasksCompleted ?? 0}
-                          </p>
                         </div>
                       )}
                     </div>

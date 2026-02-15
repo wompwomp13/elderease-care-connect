@@ -17,6 +17,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
 import { IdDocumentView } from "@/components/IdDocumentView";
+import { VolunteerAvatar } from "@/components/VolunteerAvatar";
 
 type Volunteer = {
   id: string;
@@ -29,6 +30,7 @@ type Volunteer = {
   status: "approved" | "pending" | "terminated";
   idFileUrl?: string | null;
   idFileName?: string | null;
+  profilePhotoUrl?: string | null;
 };
 
 const SERVICE_OPTIONS = [
@@ -492,7 +494,12 @@ const VolunteerList = () => {
                   </TableRow>
                 ) : list.map((v) => (
                   <TableRow key={v.id}>
-                    <TableCell className="font-medium">{v.fullName || "—"}</TableCell>
+                    <TableCell className="font-medium">
+                      <div className="flex items-center gap-2">
+                        <VolunteerAvatar profilePhotoUrl={v.profilePhotoUrl} name={v.fullName} size="sm" />
+                        <span>{v.fullName || "—"}</span>
+                      </div>
+                    </TableCell>
                     <TableCell>{v.email || "—"}</TableCell>
                     <TableCell>{formatPH(v.phone)}</TableCell>
                     <TableCell className="break-words">{Array.isArray(v.services) ? v.services.join(", ") : "—"}</TableCell>
@@ -591,17 +598,23 @@ const VolunteerList = () => {
               </div>
               </div>
               {editing && (
-                <div className="md:w-48 shrink-0 md:border-l md:pl-6 flex flex-col">
-                  <label className="block text-sm font-medium mb-2">ID Document</label>
-                  <IdDocumentView
-                    url={editing.idFileUrl ?? null}
-                    fileName={editing.idFileName}
-                    name={editing.fullName || editing.email || "Volunteer"}
-                  />
+                <div className="md:w-48 shrink-0 md:border-l md:pl-6 flex flex-col gap-4">
+                  <div>
+                    <label className="block text-sm font-medium mb-2">Profile Photo</label>
+                    <VolunteerAvatar profilePhotoUrl={editing.profilePhotoUrl} name={editing.fullName} size="lg" className="border-2" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-2">ID Document</label>
+                    <IdDocumentView
+                      url={editing.idFileUrl ?? null}
+                      fileName={editing.idFileName}
+                      name={editing.fullName || editing.email || "Volunteer"}
+                    />
+                  </div>
                 </div>
               )}
             </div>
-              <div className="flex justify-end gap-2 pt-2 border-t">
+            <div className="flex justify-end gap-2 pt-2 border-t">
                 <Button variant="outline" onClick={() => setEditing(null)}>Cancel</Button>
                 <Button onClick={saveEdit}>Save</Button>
               </div>

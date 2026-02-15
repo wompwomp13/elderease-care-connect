@@ -3,10 +3,14 @@ import { Button } from "@/components/ui/button";
 import { getCurrentUser, logout, subscribeToAuth, type AuthProfile } from "@/lib/auth";
 import logo from "@/assets/logo.png";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { IdDocumentView } from "@/components/IdDocumentView";
+import { doc, updateDoc } from "firebase/firestore";
+import { ref, uploadBytes, getDownloadURL, deleteObject } from "firebase/storage";
 import { collection, onSnapshot, query, where } from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { db, storage } from "@/lib/firebase";
+import { useToast } from "@/hooks/use-toast";
+import { Camera, Loader2, Trash2, User } from "lucide-react";
 
 const CompanionNavbar = () => {
   const user = getCurrentUser();
@@ -22,6 +26,7 @@ const CompanionNavbar = () => {
         <div className="hidden md:flex items-center gap-5" role="navigation" aria-label="Primary">
           <Link to="/companion" className={`transition-opacity ${isActive("/companion") ? "font-semibold underline underline-offset-8 opacity-100" : "opacity-90 hover:opacity-100"}`}>Dashboard</Link>
           <Link to="/companion/assignments" className={`transition-opacity ${isActive("/companion/assignments") ? "font-semibold underline underline-offset-8 opacity-100" : "opacity-90 hover:opacity-100"}`}>My Assignments</Link>
+          <Link to="/companion/requests" className={`transition-opacity ${isActive("/companion/requests") ? "font-semibold underline underline-offset-8 opacity-100" : "opacity-90 hover:opacity-100"}`}>Find Requests</Link>
           <Link to="/companion/activity" className={`transition-opacity ${isActive("/companion/activity") ? "font-semibold underline underline-offset-8 opacity-100" : "opacity-90 hover:opacity-100"}`}>Activity Log</Link>
           <Link to="/companion/profile" className={`transition-opacity ${isActive("/companion/profile") ? "font-semibold underline underline-offset-8 opacity-100" : "opacity-90 hover:opacity-100"}`}>Profile</Link>
           {user ? (
@@ -37,9 +42,17 @@ const CompanionNavbar = () => {
   );
 };
 
+const MAX_PHOTO_SIZE_MB = 2;
+const MAX_PHOTO_SIZE_BYTES = MAX_PHOTO_SIZE_MB * 1024 * 1024;
+const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
+
 const Profile = () => {
+  const { toast } = useToast();
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [auth, setAuth] = useState<AuthProfile | null>(null);
   const [idDoc, setIdDoc] = useState<{ idFileUrl: string | null; idFileName?: string | null } | null>(null);
+  const [volunteerDoc, setVolunteerDoc] = useState<{ id: string; profilePhotoUrl?: string | null; profilePhotoStoragePath?: string | null } | null>(null);
+  const [photoUploading, setPhotoUploading] = useState(false);
 
   useEffect(() => {
     const unsub = subscribeToAuth(setAuth);
@@ -50,20 +63,88 @@ const Profile = () => {
     const email = (auth?.email ?? "").trim().toLowerCase();
     if (!email || auth?.role !== "companion") {
       setIdDoc(null);
+      setVolunteerDoc(null);
       return;
     }
     const q = query(collection(db, "pendingVolunteers"), where("email", "==", email));
     const unsub = onSnapshot(q, (snap) => {
-      const doc = snap.docs[0];
-      if (!doc) {
+      const docSnap = snap.docs[0];
+      if (!docSnap) {
         setIdDoc(null);
+        setVolunteerDoc(null);
         return;
       }
-      const d = doc.data() as { idFileUrl?: string | null; idFileName?: string | null };
+      const d = docSnap.data() as { idFileUrl?: string | null; idFileName?: string | null; profilePhotoUrl?: string | null; profilePhotoStoragePath?: string | null };
       setIdDoc({ idFileUrl: d.idFileUrl ?? null, idFileName: d.idFileName });
+      setVolunteerDoc({
+        id: docSnap.id,
+        profilePhotoUrl: d.profilePhotoUrl ?? null,
+        profilePhotoStoragePath: d.profilePhotoStoragePath ?? null,
+      });
     });
     return () => unsub();
   }, [auth?.email, auth?.role]);
+
+  const deleteOldPhotoFromStorage = async (storagePath: string | null | undefined) => {
+    if (!storagePath?.startsWith("profile-photos/")) return;
+    try {
+      const oldRef = ref(storage, storagePath);
+      await deleteObject(oldRef);
+    } catch (e: any) {
+      if (e?.code !== "storage/object-not-found") {
+        console.warn("Could not delete old photo:", e?.message);
+      }
+    }
+  };
+
+  const handlePhotoFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file || !volunteerDoc || !auth?.uid) return;
+    if (!ALLOWED_TYPES.includes(file.type)) {
+      toast({ title: "Invalid file type", description: "Please use JPEG, PNG, WebP, or GIF.", variant: "destructive" });
+      return;
+    }
+    if (file.size > MAX_PHOTO_SIZE_BYTES) {
+      toast({ title: "File too large", description: `Please use a file under ${MAX_PHOTO_SIZE_MB}MB.`, variant: "destructive" });
+      return;
+    }
+    setPhotoUploading(true);
+    try {
+      await deleteOldPhotoFromStorage(volunteerDoc.profilePhotoStoragePath);
+      const ext = file.name.split(".").pop() || "jpg";
+      const path = `profile-photos/${auth.uid}/${Date.now()}.${ext}`;
+      const storageRef = ref(storage, path);
+      await uploadBytes(storageRef, file);
+      const url = await getDownloadURL(storageRef);
+      await updateDoc(doc(db, "pendingVolunteers", volunteerDoc.id), {
+        profilePhotoUrl: url,
+        profilePhotoStoragePath: path,
+      });
+      toast({ title: "Profile photo updated" });
+    } catch (err: any) {
+      toast({ title: "Upload failed", description: err?.message ?? "Please try again.", variant: "destructive" });
+    } finally {
+      setPhotoUploading(false);
+    }
+  };
+
+  const handleDeletePhoto = async () => {
+    if (!volunteerDoc) return;
+    setPhotoUploading(true);
+    try {
+      await deleteOldPhotoFromStorage(volunteerDoc.profilePhotoStoragePath);
+      await updateDoc(doc(db, "pendingVolunteers", volunteerDoc.id), {
+        profilePhotoUrl: null,
+        profilePhotoStoragePath: null,
+      });
+      toast({ title: "Profile photo removed" });
+    } catch (err: any) {
+      toast({ title: "Delete failed", description: err?.message ?? "Please try again.", variant: "destructive" });
+    } finally {
+      setPhotoUploading(false);
+    }
+  };
 
   const formatPH = (phone?: string | null): string => {
     if (!phone) return "—";
@@ -87,6 +168,54 @@ const Profile = () => {
               <CardTitle>Account Details</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4 text-sm">
+              {auth?.role === "companion" && volunteerDoc && (
+                <div className="flex items-center gap-4 pb-4 border-b border-muted/50">
+                  <div className="relative shrink-0">
+                    <div className="h-24 w-24 rounded-full overflow-hidden bg-muted border-2 border-border flex items-center justify-center">
+                      {volunteerDoc.profilePhotoUrl ? (
+                        <img src={volunteerDoc.profilePhotoUrl} alt="Profile" className="h-full w-full object-cover" />
+                      ) : (
+                        <User className="h-12 w-12 text-muted-foreground" />
+                      )}
+                    </div>
+                    {photoUploading && (
+                      <div className="absolute inset-0 rounded-full bg-black/50 flex items-center justify-center">
+                        <Loader2 className="h-8 w-8 text-white animate-spin" />
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <p className="text-sm font-medium">Profile photo</p>
+                    <div className="flex flex-wrap gap-2">
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept={ALLOWED_TYPES.join(",")}
+                        className="hidden"
+                        onChange={handlePhotoFileSelect}
+                      />
+                      {!volunteerDoc.profilePhotoUrl && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={photoUploading}
+                          onClick={() => fileInputRef.current?.click()}
+                          className="gap-1.5"
+                        >
+                          <Camera className="h-4 w-4" />
+                          Add photo
+                        </Button>
+                      )}
+                      {volunteerDoc.profilePhotoUrl && (
+                        <Button variant="outline" size="sm" disabled={photoUploading} onClick={handleDeletePhoto} className="gap-1.5 text-destructive hover:text-destructive">
+                          <Trash2 className="h-4 w-4" />
+                          Delete photo
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
               <div className="grid gap-3 sm:grid-cols-2">
                 <div className="flex flex-col gap-1 py-2 border-b border-muted/50">
                   <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Name</span>

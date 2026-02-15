@@ -43,9 +43,9 @@ const ElderNavbar = () => {
 type NotificationItem = { id: string; icon: any; title: string; text: string; badge: string; tone: string; receipt?: any };
 
 const toneClasses: Record<string, string> = {
-  info: "border-blue-500/20 bg-blue-500/5",
-  suggest: "border-amber-500/20 bg-amber-500/5",
-  highlight: "border-green-500/20 bg-green-500/5",
+  info: "border-[#6F8F66]/30 bg-[#6F8F66]/5",
+  suggest: "border-[#91B187]/30 bg-[#91B187]/5",
+  highlight: "border-[#B7CDB0]/40 bg-[#B7CDB0]/10",
 };
 
 const Notifications = () => {

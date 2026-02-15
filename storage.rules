@@ -8,6 +8,15 @@ service firebase.storage {
                    && (request.resource.contentType.matches('image/.*')
                        || request.resource.contentType == 'application/pdf');
     }
+    // Profile photos: volunteers upload/delete their own; signed-in users can read
+    match /profile-photos/{userId}/{fileName} {
+      allow read: if request.auth != null;
+      allow create, update: if request.auth != null
+                             && request.auth.uid == userId
+                             && request.resource.size < 2 * 1024 * 1024
+                             && request.resource.contentType.matches('image/.*');
+      allow delete: if request.auth != null && request.auth.uid == userId;
+    }
     match /{allPaths=**} {
       allow read, write: if false;
     }

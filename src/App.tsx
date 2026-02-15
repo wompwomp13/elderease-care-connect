@@ -24,6 +24,7 @@ import VolunteerList from "@/pages/admin/VolunteerList";
 import ServiceRequests from "@/pages/admin/ServiceRequests";
 import CompanionHome from "@/pages/companion/CompanionHome";
 import MyAssignments from "@/pages/companion/MyAssignments";
+import FindRequests from "@/pages/companion/FindRequests";
 import CompanionProfile from "@/pages/companion/Profile";
 import ActivityLog from "@/pages/companion/ActivityLog";
 
@@ -58,6 +59,7 @@ const App = () => (
           <Route path="/companion" element={<CompanionGate />}>
             <Route index element={<CompanionHome />} />
             <Route path="assignments" element={<MyAssignments />} />
+            <Route path="requests" element={<FindRequests />} />
             <Route path="activity" element={<ActivityLog />} />
             <Route path="profile" element={<CompanionProfile />} />
           </Route>

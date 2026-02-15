@@ -2,13 +2,14 @@ import AdminLayout from "@/components/layout/AdminLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { VolunteerAvatar } from "@/components/VolunteerAvatar";
 import { Calendar, Clock, MapPin, User, Inbox, Loader2, Star, BarChart3 } from "lucide-react";
 import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious } from "@/components/ui/carousel";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { useEffect, useMemo, useState } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { db } from "@/lib/firebase";
-import { addDoc, collection, doc, getDocs, limit, onSnapshot, orderBy, query, serverTimestamp, updateDoc, where } from "firebase/firestore";
+import { addDoc, collection, doc, getDoc, getDocs, limit, onSnapshot, orderBy, query, serverTimestamp, updateDoc, where } from "firebase/firestore";
 import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "@/components/ui/pagination";
 
 // Base hourly rates (PHP) per service
@@ -317,7 +318,18 @@ const ServiceRequests = () => {
 
   const handleAssign = async (requestId: string, volunteer: any) => {
     try {
-      const req = (requests || []).find((r) => r.id === requestId);
+      const reqRef = doc(db, "serviceRequests", requestId);
+      const freshSnap = await getDoc(reqRef);
+      if (!freshSnap.exists()) {
+        toast({ title: "Request not found", variant: "destructive" });
+        return;
+      }
+      const fresh = freshSnap.data() as any;
+      if ((fresh.status || "").toLowerCase() !== "pending") {
+        toast({ title: "Already assigned", description: "This request was just assigned by a volunteer or another admin.", variant: "destructive" });
+        return;
+      }
+      const req = (requests || []).find((r) => r.id === requestId) || fresh;
       if (req) {
         // Quick UI availability check
         const uiAvailable = isVolunteerAvailableForRequest(volunteer, req);
@@ -505,6 +517,9 @@ const ServiceRequests = () => {
                       <div className="flex items-center gap-2">
                         <User className="h-4 w-4 text-muted-foreground" />
                         <span className="text-sm font-medium">{request.assignedTo}</span>
+                        {request.acceptedByVolunteer && (
+                          <Badge variant="secondary" className="text-xs">Volunteer accepted</Badge>
+                        )}
                       </div>
                     )}
                     {request.preferredVolunteerName && (
@@ -655,9 +670,7 @@ const ServiceRequests = () => {
                                           <div className="p-5 cursor-grab active:cursor-grabbing">
                                             <div className="flex items-start justify-between mb-3">
                                               <div className="flex items-center gap-3">
-                                                <div className="h-12 w-12 rounded-full bg-muted grid place-items-center">
-                                                  <User className="h-6 w-6 text-muted-foreground" />
-                                                </div>
+                                                <VolunteerAvatar profilePhotoUrl={v.profilePhotoUrl} name={v.fullName} size="md" />
                                                 <div className="min-w-0">
                                                   <p className="font-semibold leading-tight truncate">
                                                     {v.fullName}
@@ -709,8 +722,8 @@ const ServiceRequests = () => {
                                                   <DialogTitle>{v.fullName}</DialogTitle>
                                                 </DialogHeader>
                                                 <div className="space-y-3 text-sm text-muted-foreground">
-                                                  <div className="flex items-center gap-2">
-                                                    <User className="h-4 w-4" />
+                                                  <div className="flex items-center gap-3">
+                                                    <VolunteerAvatar profilePhotoUrl={v.profilePhotoUrl} name={v.fullName} size="lg" />
                                                     <span>{v.email || "Email not provided"}</span>
                                                   </div>
                                                   <div className="flex items-center gap-2">
