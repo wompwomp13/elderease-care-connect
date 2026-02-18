@@ -6,11 +6,16 @@ import { Users, ClipboardList, Star, Award, ChevronRight, ArrowUpRight, ArrowDow
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line } from "recharts";
 import { collection, onSnapshot, query, where } from "firebase/firestore";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Settings2 } from "lucide-react";
 import { db } from "@/lib/firebase";
 import { cn } from "@/lib/utils";
+import { periodChange, predictNext, type ForecastMethod } from "@/lib/forecast";
 
 type ServicePeriodFilter = "weekly" | "monthly" | "yearly";
 type PendingRangeFilter = "from_2025" | "2025" | "2026";
+type ForecastWindow = 3 | 6 | 12;
+type ForecastHorizon = 1 | 2 | 3;
 
 const Dashboard = () => {
   const [expandedVolunteer, setExpandedVolunteer] = useState<string | null>(null);
@@ -18,6 +23,11 @@ const Dashboard = () => {
   const [pendingRangeFilter, setPendingRangeFilter] = useState<PendingRangeFilter>("from_2025");
   const [cancelPeriodFilter, setCancelPeriodFilter] = useState<ServicePeriodFilter>("monthly");
   const [volunteerPeriodFilter, setVolunteerPeriodFilter] = useState<ServicePeriodFilter>("monthly");
+
+  // Dynamic forecasting controls
+  const [forecastWindow, setForecastWindow] = useState<ForecastWindow>(6);
+  const [forecastHorizon, setForecastHorizon] = useState<ForecastHorizon>(2);
+  const [forecastMethod, setForecastMethod] = useState<ForecastMethod>("trend");
 
   // Live collections
   const [requests, setRequests] = useState<any[] | null>(null);
@@ -205,12 +215,113 @@ const Dashboard = () => {
 
   const pendingPercentage = totalRequests > 0 ? Math.round((pendingRequests / totalRequests) * 1000) / 10 : 0;
 
-  const stats = [
-    { title: "Total Service Requests", value: String(totalRequests), icon: ClipboardList, change: "", trend: "up", bg: "bg-[#2F86A8]", subtitle: "live" },
-    { title: "Active Volunteers", value: String(activeVolunteers), icon: Users, change: "", trend: "up", bg: "bg-[#2F86A8]", subtitle: "approved" },
-    { title: "Completed This Week", value: String(completedThisWeek), icon: Star, change: "", trend: "up", bg: "bg-[#2F86A8]", subtitle: "confirmed" },
-    { title: "Pending Requests", value: String(pendingRequests), icon: ClipboardList, change: `${pendingPercentage}%`, trend: "up", bg: "bg-[#2F86A8]", subtitle: "of total • awaiting assignment" },
-  ];
+  // Period-over-period trend data for stat cards
+  const statTrendData = useMemo(() => {
+    const nowMs = Date.now();
+    const oneDay = 24 * 60 * 60 * 1000;
+    const oneWeek = 7 * oneDay;
+
+    // Last 14 days for request creation (for sparkline + period comparison)
+    const requestsByDay: number[] = Array.from({ length: 14 }).map(() => 0);
+    (requests || []).forEach((r) => {
+      const ms = getRequestCreatedMs(r);
+      if (!ms) return;
+      const daysAgo = Math.floor((nowMs - ms) / oneDay);
+      if (daysAgo >= 0 && daysAgo < 14) requestsByDay[13 - daysAgo] += 1;
+    });
+    const requestsThisWeek = requestsByDay.slice(7, 14).reduce((a, b) => a + b, 0);
+    const requestsPrevWeek = requestsByDay.slice(0, 7).reduce((a, b) => a + b, 0);
+
+    // Completed: this week vs last week
+    const twoWeeksAgo = nowMs - 14 * oneDay;
+    const completedByDay: number[] = Array.from({ length: 14 }).map(() => 0);
+    (assignments || []).forEach((a) => {
+      if (!isCompletedConfirmed(a)) return;
+      const ms = getDateMs(a);
+      if (!ms || ms < twoWeeksAgo) return;
+      const daysAgo = Math.floor((nowMs - ms) / oneDay);
+      if (daysAgo >= 0 && daysAgo < 14) completedByDay[13 - daysAgo] += 1;
+    });
+    const completedPrevWeek = completedByDay.slice(0, 7).reduce((a, b) => a + b, 0);
+
+    // New volunteers approved: this month vs last month
+    const getDecidedMs = (v: any): number => {
+      const ts = v.decidedAt ?? v.createdAt;
+      if (!ts) return 0;
+      return typeof ts === "number" ? ts : (ts?.toMillis?.() ?? 0);
+    };
+    const monthMs = 30 * oneDay;
+    const newVolsThisMonth = (approvedVolunteers || []).filter((v) => getDecidedMs(v) >= nowMs - monthMs).length;
+    const newVolsPrevMonth = (approvedVolunteers || []).filter(
+      (v) => (getDecidedMs(v) >= nowMs - monthMs * 2 && getDecidedMs(v) < nowMs - monthMs)
+    ).length;
+
+    return {
+      requestsThisWeek,
+      requestsPrevWeek,
+      requestsByDay,
+      completedPrevWeek,
+      completedByDay,
+      newVolsThisMonth,
+      newVolsPrevMonth,
+    };
+  }, [requests, assignments, approvedVolunteers]);
+
+  const stats = useMemo(() => {
+    const reqChange = periodChange(statTrendData.requestsThisWeek, statTrendData.requestsPrevWeek);
+    const completedChange = periodChange(completedThisWeek, statTrendData.completedPrevWeek);
+    const volChange = periodChange(statTrendData.newVolsThisMonth, statTrendData.newVolsPrevMonth);
+
+    return [
+      {
+        title: "Total Service Requests",
+        value: String(totalRequests),
+        icon: ClipboardList,
+        change: reqChange != null ? `${reqChange > 0 ? "+" : ""}${reqChange}%` : "—",
+        trend: reqChange != null ? (reqChange >= 0 ? "up" : "down") : "neutral",
+        bg: "bg-[#2F86A8]",
+        subtitle: "vs last week",
+        sparklineData: statTrendData.requestsByDay,
+      },
+      {
+        title: "Active Volunteers",
+        value: String(activeVolunteers),
+        icon: Users,
+        change: volChange != null ? `${volChange > 0 ? "+" : ""}${volChange}%` : "—",
+        trend: volChange != null ? (volChange >= 0 ? "up" : "down") : "neutral",
+        bg: "bg-[#2F86A8]",
+        subtitle: "new signups vs last month",
+        sparklineData: null as number[] | null,
+      },
+      {
+        title: "Completed This Week",
+        value: String(completedThisWeek),
+        icon: Star,
+        change: completedChange != null ? `${completedChange > 0 ? "+" : ""}${completedChange}%` : "—",
+        trend: completedChange != null ? (completedChange >= 0 ? "up" : "down") : "neutral",
+        bg: "bg-[#2F86A8]",
+        subtitle: "vs last week",
+        sparklineData: statTrendData.completedByDay,
+      },
+      {
+        title: "Pending Requests",
+        value: String(pendingRequests),
+        icon: ClipboardList,
+        change: reqChange != null ? `${reqChange > 0 ? "+" : ""}${reqChange}% inflow` : "—",
+        trend: reqChange != null ? (reqChange >= 0 ? "up" : "down") : "neutral",
+        bg: "bg-[#2F86A8]",
+        subtitle: `${pendingPercentage}% of total`,
+        sparklineData: statTrendData.requestsByDay,
+      },
+    ];
+  }, [
+    totalRequests,
+    activeVolunteers,
+    completedThisWeek,
+    pendingRequests,
+    pendingPercentage,
+    statTrendData,
+  ]);
 
   // Weekly activity (last 7 days)
   const weekdayShort = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"] as const;
@@ -230,11 +341,11 @@ const Dashboard = () => {
     return base.map(({ day, requests }) => ({ day, requests }));
   }, [assignments]);
 
-  // Monthly trend (last 6 months)
+  // Monthly trend (configurable window) + forecast (configurable horizon)
   const monthlyTrend = useMemo(() => {
-    const months: { month: string; services: number; key: string }[] = [];
     const cur = new Date(now);
-    for (let i = 5; i >= 0; i--) {
+    const months: { month: string; services: number; key: string }[] = [];
+    for (let i = forecastWindow - 1; i >= 0; i--) {
       const d = new Date(cur.getFullYear(), cur.getMonth() - i, 1);
       const key = `${d.getFullYear()}-${d.getMonth()}`;
       const label = d.toLocaleString(undefined, { month: "short" });
@@ -249,8 +360,24 @@ const Dashboard = () => {
       const idx = months.findIndex((m) => m.key === key);
       if (idx >= 0) months[idx].services += 1;
     });
-    return months.map(({ month, services }) => ({ month, services }));
-  }, [assignments]);
+    const values = months.map((m) => m.services);
+    const forecasted = predictNext(values, forecastHorizon, forecastMethod);
+    const lastActual = values[values.length - 1] ?? 0;
+    const historical = months.map(({ month, services }, idx) => ({
+      month,
+      services,
+      forecast: idx === months.length - 1 && forecasted.length > 0 ? lastActual : null as number | null,
+    }));
+    const nextMonths = forecasted.map((val, i) => {
+      const d = new Date(cur.getFullYear(), cur.getMonth() + i + 1, 1);
+      return {
+        month: d.toLocaleString(undefined, { month: "short" }),
+        services: null as number | null,
+        forecast: Math.round(val),
+      };
+    });
+    return [...historical, ...nextMonths];
+  }, [assignments, forecastWindow, forecastHorizon, forecastMethod]);
 
   // Top Volunteers – dynamic analytics with period filter, trends, and forecast
   const tasksMap: Record<string, number> = useMemo(() => {
@@ -435,6 +562,86 @@ const Dashboard = () => {
     return { total: pendingInRange.length, chartData: months.map(({ month, pending }) => ({ month, pending })) };
   }, [requests, pendingRangeFilter]);
 
+  // Service demand forecast: monthly counts per service type + prediction
+  const serviceDemandForecast = useMemo(() => {
+    const cur = new Date();
+    const months: { month: string; key: string }[] = [];
+    for (let i = forecastWindow - 1; i >= 0; i--) {
+      const d = new Date(cur.getFullYear(), cur.getMonth() - i, 1);
+      months.push({
+        month: d.toLocaleString(undefined, { month: "short", year: "2-digit" }),
+        key: `${d.getFullYear()}-${d.getMonth()}`,
+      });
+    }
+    const serviceIds = ["companionship", "housekeeping", "errands", "visits", "socialization"];
+    const byService: Record<string, number[]> = {};
+    serviceIds.forEach((id) => { byService[id] = months.map(() => 0); });
+    (requests || []).forEach((r) => {
+      const ms = getRequestCreatedMs(r);
+      if (!ms) return;
+      const d = new Date(ms);
+      const key = `${d.getFullYear()}-${d.getMonth()}`;
+      const idx = months.findIndex((m) => m.key === key);
+      if (idx < 0) return;
+      const arr: string[] = Array.isArray(r.services) ? r.services : (r.service ? [r.service] : []);
+      arr.forEach((s) => {
+        const id = toServiceId(s);
+        if (byService[id]) byService[id][idx] += 1;
+      });
+    });
+    const forecast: { name: string; current: number; forecast: number }[] = [];
+    serviceIds.forEach((id) => {
+      const vals = byService[id];
+      const total = vals.reduce((a, b) => a + b, 0);
+      if (total === 0) return;
+      const pred = predictNext(vals, forecastHorizon, forecastMethod);
+      forecast.push({
+        name: toDisplayName(id),
+        current: vals[vals.length - 1] ?? 0,
+        forecast: Math.round((pred[0] ?? 0)),
+      });
+    });
+    return forecast.sort((a, b) => b.forecast - a.forecast);
+  }, [requests, forecastWindow, forecastHorizon, forecastMethod]);
+
+  // Volunteer capacity forecast: projected completions vs forecasted demand
+  const capacityForecast = useMemo(() => {
+    const cur = new Date();
+    const months: { key: string }[] = [];
+    for (let i = forecastWindow - 1; i >= 0; i--) {
+      const d = new Date(cur.getFullYear(), cur.getMonth() - i, 1);
+      months.push({ key: `${d.getFullYear()}-${d.getMonth()}` });
+    }
+    const completedByMonth = months.map(() => 0);
+    const requestsByMonth = months.map(() => 0);
+    (assignments || []).forEach((a) => {
+      if (!isCompletedConfirmed(a)) return;
+      const ms = getDateMs(a);
+      if (!ms) return;
+      const d = new Date(ms);
+      const idx = months.findIndex((m) => m.key === `${d.getFullYear()}-${d.getMonth()}`);
+      if (idx >= 0) completedByMonth[idx] += 1;
+    });
+    (requests || []).forEach((r) => {
+      const ms = getRequestCreatedMs(r);
+      if (!ms) return;
+      const d = new Date(ms);
+      const idx = months.findIndex((m) => m.key === `${d.getFullYear()}-${d.getMonth()}`);
+      if (idx >= 0) requestsByMonth[idx] += 1;
+    });
+    const capacityPred = predictNext(completedByMonth, forecastHorizon, forecastMethod);
+    const demandPred = predictNext(requestsByMonth, forecastHorizon, forecastMethod);
+    const projectedCapacity = Math.round(capacityPred[0] ?? 0);
+    const forecastedDemand = Math.round(demandPred[0] ?? 0);
+    const gap = forecastedDemand - projectedCapacity;
+    return {
+      projectedCapacity,
+      forecastedDemand,
+      gap,
+      status: gap > 2 ? "shortage" : gap < -2 ? "surplus" : "balanced",
+    };
+  }, [assignments, requests, forecastWindow, forecastHorizon, forecastMethod]);
+
   // Most requested services (live from serviceRequests, filtered by period)
   const topServices = useMemo(() => {
     const nowMs = Date.now();
@@ -468,15 +675,9 @@ const Dashboard = () => {
   return (
     <AdminLayout>
       <div className="space-y-6">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-          <div>
-            <h1 className="text-3xl font-bold mb-1">Dashboard Overview</h1>
-            <p className="text-muted-foreground">Monitor system performance and key metrics</p>
-          </div>
-          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-green-700 bg-green-50 dark:bg-green-500/10 dark:text-green-400 px-3 py-1.5 rounded-full shrink-0">
-            <span className="h-2 w-2 rounded-full bg-green-500 animate-pulse" />
-            Live from Firestore
-          </span>
+        <div>
+          <h1 className="text-3xl font-bold mb-1">Dashboard Overview</h1>
+          <p className="text-muted-foreground">Monitor system performance and key metrics</p>
         </div>
 
         {/* Stats Grid - always visible */}
@@ -489,19 +690,22 @@ const Dashboard = () => {
                   <CardTitle className="text-sm font-medium text-white/90">
                     {stat.title}
                   </CardTitle>
-                  <stat.icon className="h-5 w-5 text-white/80" />
+                  <stat.icon className="h-5 w-5 text-white/80 shrink-0" />
                 </div>
               </CardHeader>
               <CardContent className="relative">
                 <div className="text-3xl font-bold text-white mb-1">{stat.value}</div>
-                <div className="flex items-center gap-1 text-sm text-white/90">
-                  {stat.trend === "up" ? (
-                    <ArrowUpRight className="h-4 w-4" />
-                  ) : (
-                    <ArrowDownRight className="h-4 w-4" />
+                <div className="flex items-center gap-1.5 text-sm text-white/90">
+                  {stat.trend !== "neutral" && (
+                    stat.trend === "up" ? (
+                      <ArrowUpRight className="h-4 w-4 shrink-0 text-white" />
+                    ) : (
+                      <ArrowDownRight className="h-4 w-4 shrink-0 text-white" />
+                    )
                   )}
-                  <span className="font-medium">{stat.change}</span>
-                  <span className="text-white/70">{stat.subtitle}</span>
+                  <span className="truncate">
+                    {stat.change !== "—" ? `${stat.change} · ${stat.subtitle}` : stat.subtitle}
+                  </span>
                 </div>
               </CardContent>
             </Card>
@@ -517,13 +721,72 @@ const Dashboard = () => {
           </TabsList>
 
           <TabsContent value="overview" className="space-y-6 mt-0">
+        {/* Customize forecast - above graphs, popup */}
+        <div className="flex items-center justify-between">
+          <p className="text-sm text-muted-foreground">Forecast uses last {forecastWindow} months · {forecastHorizon} month{forecastHorizon > 1 ? "s" : ""} ahead · {forecastMethod}</p>
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="outline" size="sm" className="gap-1.5">
+                <Settings2 className="h-3.5 w-3.5" />
+                Customize forecast
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-72" align="end">
+              <div className="space-y-4">
+                <h4 className="font-medium text-sm">Forecast settings</h4>
+                <div className="flex flex-col gap-2">
+                  <span className="text-xs font-medium text-muted-foreground">History</span>
+                  <div className="flex rounded-md border bg-muted/50 p-0.5">
+                    {([3, 6, 12] as const).map((n) => (
+                      <button key={n} type="button" onClick={() => setForecastWindow(n)}
+                        className={cn("flex-1 px-2 py-1.5 text-sm font-medium rounded", forecastWindow === n ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground")}>
+                        {n}mo
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="flex flex-col gap-2">
+                  <span className="text-xs font-medium text-muted-foreground">Horizon</span>
+                  <div className="flex rounded-md border bg-muted/50 p-0.5">
+                    {([1, 2, 3] as const).map((n) => (
+                      <button key={n} type="button" onClick={() => setForecastHorizon(n)}
+                        className={cn("flex-1 px-2 py-1.5 text-sm font-medium rounded", forecastHorizon === n ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground")}>
+                        {n} mo
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="flex flex-col gap-2">
+                  <span className="text-xs font-medium text-muted-foreground">Method</span>
+                  <div className="flex rounded-md border bg-muted/50 p-0.5">
+                    {(["trend", "average"] as const).map((m) => (
+                      <button key={m} type="button" onClick={() => setForecastMethod(m)}
+                        className={cn("flex-1 px-2 py-1.5 text-sm font-medium rounded capitalize", forecastMethod === m ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground")}>
+                        {m}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </PopoverContent>
+          </Popover>
+        </div>
+
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <Card className="shadow-lg border-0">
             <CardHeader>
               <CardTitle className="text-lg">Weekly Activity</CardTitle>
-              <p className="text-sm text-muted-foreground">Completed services this week</p>
+              <p className="text-sm text-muted-foreground">Completed services by day — guardian-confirmed assignments from the last 7 days</p>
             </CardHeader>
             <CardContent>
+              {weeklyData.every((d) => d.requests === 0) ? (
+                <div className="flex flex-col items-center justify-center py-12 text-center">
+                  <p className="text-sm font-medium text-muted-foreground">No completed services this week</p>
+                  <p className="text-xs text-muted-foreground mt-1 max-w-[280px]">
+                    Data appears when a volunteer marks a service complete and the guardian confirms it in My Schedule.
+                  </p>
+                </div>
+              ) : (
               <ResponsiveContainer width="100%" height={240}>
                 <BarChart data={weeklyData}>
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
@@ -539,12 +802,13 @@ const Dashboard = () => {
                   <Bar dataKey="requests" fill="hsl(var(--primary))" radius={[8, 8, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
+              )}
             </CardContent>
           </Card>
           <Card className="shadow-lg border-0">
             <CardHeader>
               <CardTitle className="text-lg">Monthly Trend</CardTitle>
-              <p className="text-sm text-muted-foreground">Total services completed</p>
+              <p className="text-sm text-muted-foreground">Completed services with {forecastHorizon}-month forecast</p>
             </CardHeader>
             <CardContent>
               <ResponsiveContainer width="100%" height={240}>
@@ -552,29 +816,126 @@ const Dashboard = () => {
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                   <XAxis dataKey="month" stroke="hsl(var(--muted-foreground))" fontSize={12} />
                   <YAxis stroke="hsl(var(--muted-foreground))" fontSize={12} />
-                  <Tooltip 
-                    contentStyle={{ 
-                      backgroundColor: "hsl(var(--card))", 
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: "hsl(var(--card))",
                       border: "1px solid hsl(var(--border))",
-                      borderRadius: "8px"
-                    }} 
+                      borderRadius: "8px",
+                    }}
+                    formatter={(value: number, name: string) => [
+                      value,
+                      name === "services" ? "Actual" : "Forecast",
+                    ]}
                   />
-                  <Line 
-                    type="monotone" 
-                    dataKey="services" 
-                    stroke="hsl(var(--primary))" 
-                    strokeWidth={3}
-                    dot={{ fill: "hsl(var(--primary))", r: 4 }}
+                  <Line
+                    type="monotone"
+                    dataKey="services"
+                    stroke="hsl(var(--primary))"
+                    strokeWidth={2}
+                    dot={{ fill: "hsl(var(--primary))", r: 3 }}
+                    connectNulls={false}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="forecast"
+                    stroke="hsl(var(--primary))"
+                    strokeWidth={2}
+                    strokeDasharray="6 4"
+                    dot={{ fill: "hsl(var(--primary))", r: 2 }}
+                    connectNulls={true}
                   />
                 </LineChart>
               </ResponsiveContainer>
+              <div className="flex justify-end gap-4 mt-2 text-xs text-muted-foreground">
+                <span className="flex items-center gap-1.5"><span className="inline-block w-4 border-b-2 border-primary" />Actual</span>
+                <span className="flex items-center gap-1.5"><span className="inline-block w-4 border-b-2 border-primary border-dashed" />Forecast</span>
+              </div>
             </CardContent>
           </Card>
         </div>
+
+        {/* Forecasting - above Form Completion for better flow with charts */}
+        <Card className="shadow-lg border-0">
+          <CardHeader>
+            <CardTitle className="text-lg">Forecast</CardTitle>
+            <p className="text-sm text-muted-foreground">
+              Based on last {forecastWindow} months · {forecastHorizon} month{forecastHorizon > 1 ? "s" : ""} ahead · {forecastMethod}
+            </p>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            <div className="grid sm:grid-cols-2 gap-6">
+              <div className="rounded-xl border p-4 bg-muted/30">
+                <h4 className="text-sm font-medium mb-3">Service Demand Forecast</h4>
+                <p className="text-xs text-muted-foreground mb-3">
+                  Estimated requests per service type for next month. Uses {forecastMethod === "trend" ? "linear regression" : "the average of"} the last {forecastWindow} months.
+                </p>
+                {serviceDemandForecast.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">Insufficient data to forecast.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {serviceDemandForecast.slice(0, 5).map((s) => (
+                      <div key={s.name} className="flex justify-between items-center text-sm">
+                        <span className="font-medium">{s.name}</span>
+                        <span className="text-muted-foreground">
+                          ~{s.forecast} <span className="text-xs">req/mo</span>
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="rounded-xl border p-4 bg-muted/30">
+                <h4 className="text-sm font-medium mb-3">Capacity vs Demand</h4>
+                <p className="text-xs text-muted-foreground mb-3">
+                  Compares how many services volunteers can complete (capacity) to how many new requests are expected (demand). When demand exceeds capacity, the gap is how many requests may go unfulfilled without action.
+                </p>
+                <div className="space-y-3">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Projected capacity</span>
+                    <span className="font-bold">{capacityForecast.projectedCapacity}</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Forecasted demand</span>
+                    <span className="font-bold">{capacityForecast.forecastedDemand}</span>
+                  </div>
+                  <div
+                    className={cn(
+                      "rounded-lg px-3 py-2 text-sm font-medium",
+                      capacityForecast.status === "shortage" && "bg-amber-50 text-amber-800 dark:bg-amber-500/10 dark:text-amber-400",
+                      capacityForecast.status === "surplus" && "bg-emerald-50 text-emerald-800 dark:bg-emerald-500/10 dark:text-emerald-400",
+                      capacityForecast.status === "balanced" && "bg-muted/50 text-muted-foreground"
+                    )}
+                  >
+                    {capacityForecast.status === "shortage" && (
+                      <>We expect ~{capacityForecast.gap} more requests than volunteers can handle. Consider recruiting more volunteers or planning volunteer availability in advance.</>
+                    )}
+                    {capacityForecast.status === "surplus" && (
+                      <>Volunteers can handle ~{Math.abs(capacityForecast.gap)} more requests than expected — capacity exceeds demand.</>
+                    )}
+                    {capacityForecast.status === "balanced" && (
+                      <>Capacity and demand are in balance — expected completions roughly match expected requests.</>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div className="rounded-lg border border-primary/20 bg-primary/5 p-4">
+              <h4 className="text-sm font-medium mb-2 flex items-center gap-2">
+                <Lightbulb className="h-4 w-4 text-primary" />
+                How the forecast works
+              </h4>
+              <ul className="space-y-1.5 text-sm text-muted-foreground">
+                <li>• <strong>Trend:</strong> Calculates a linear regression on historical data to project future values.</li>
+                <li>• <strong>Average:</strong> Computes the mean of past months to forecast future values.</li>
+              </ul>
+            </div>
+          </CardContent>
+        </Card>
+
         <Card className="shadow-lg border-0">
           <CardHeader>
             <CardTitle className="text-lg">Form Completion Time</CardTitle>
-            <p className="text-sm text-muted-foreground">Average time to complete forms</p>
+            <p className="text-sm text-muted-foreground">Average time users spend on the service request form (guardians) and volunteer application — helps identify UX friction</p>
           </CardHeader>
           <CardContent>
             <div className="grid sm:grid-cols-2 gap-4">
