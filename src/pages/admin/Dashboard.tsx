@@ -2,15 +2,16 @@ import { useEffect, useMemo, useState } from "react";
 import AdminLayout from "@/components/layout/AdminLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Users, ClipboardList, Star, Award, ChevronRight, ArrowUpRight, ArrowDownRight, User as UserIcon, Lightbulb } from "lucide-react";
+import { Users, ClipboardList, Star, Award, ChevronRight, ArrowUpRight, ArrowDownRight, User as UserIcon, Lightbulb, Download } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line } from "recharts";
-import { collection, onSnapshot, query, where } from "firebase/firestore";
+import { collection, getDocs, onSnapshot, query, where } from "firebase/firestore";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Settings2 } from "lucide-react";
 import { db } from "@/lib/firebase";
 import { cn } from "@/lib/utils";
 import { periodChange, predictNext, type ForecastMethod } from "@/lib/forecast";
+import { generateAdminReport } from "@/lib/report-utils";
 
 type ServicePeriodFilter = "weekly" | "monthly" | "yearly";
 type PendingRangeFilter = "from_2025" | "2025" | "2026";
@@ -34,9 +35,6 @@ const Dashboard = () => {
   const [approvedVolunteers, setApprovedVolunteers] = useState<any[] | null>(null);
   const [assignments, setAssignments] = useState<any[] | null>(null);
   const [ratingsMap, setRatingsMap] = useState<Record<string, { sum: number; count: number }>>({});
-  const [avgElderMs, setAvgElderMs] = useState<number | null>(null);
-  const [avgVolunteerMs, setAvgVolunteerMs] = useState<number | null>(null);
-
   // Subscribe to Firestore
   useEffect(() => {
     const unsub = onSnapshot(collection(db, "serviceRequests"), (snap) => {
@@ -76,31 +74,6 @@ const Dashboard = () => {
     });
     return () => unsub();
   }, []);
-
-  // Form metrics averages
-  useEffect(() => {
-    const unsub = onSnapshot(collection(db, "formMetrics"), (snap) => {
-      let elderSum = 0, elderCount = 0;
-      let volunteerSum = 0, volunteerCount = 0;
-      snap.docs.forEach((d) => {
-        const m = d.data() as any;
-        const dur = Number(m.durationMs) || 0;
-        if (m.type === "elder_request_service") { elderSum += dur; elderCount += 1; }
-        if (m.type === "volunteer_application") { volunteerSum += dur; volunteerCount += 1; }
-      });
-      setAvgElderMs(elderCount ? elderSum / elderCount : null);
-      setAvgVolunteerMs(volunteerCount ? volunteerSum / volunteerCount : null);
-    });
-    return () => unsub();
-  }, []);
-
-  const formatDuration = (ms: number | null) => {
-    if (ms == null) return "—";
-    const totalSec = Math.round(ms / 1000);
-    const mins = Math.floor(totalSec / 60);
-    const secs = totalSec % 60;
-    return `${mins}m ${secs.toString().padStart(2, "0")}s`;
-  };
 
   // Derived metrics
   const totalRequests = requests?.length ?? 0;
@@ -451,41 +424,82 @@ const Dashboard = () => {
 
     const topVolunteers = list.slice(0, 5);
 
-    const months: { month: string; key: string }[] = [];
+    // Chart buckets depend on period: weekly = 6 weeks, monthly = 6 months, yearly = 4 years
+    const oneDay = 24 * 60 * 60 * 1000;
     const cur = new Date();
-    for (let i = 5; i >= 0; i--) {
-      const d = new Date(cur.getFullYear(), cur.getMonth() - i, 1);
-      months.push({ month: d.toLocaleString(undefined, { month: "short", year: "2-digit" }), key: `${d.getFullYear()}-${d.getMonth()}` });
+    const chartBuckets: { label: string; key: string; startMs: number; endMs: number }[] = [];
+
+    if (volunteerPeriodFilter === "weekly") {
+      const todayStart = new Date(cur);
+      todayStart.setHours(0, 0, 0, 0);
+      for (let i = 5; i >= 0; i--) {
+        const weekStart = new Date(todayStart);
+        weekStart.setDate(weekStart.getDate() - weekStart.getDay() - i * 7);
+        const weekEnd = new Date(weekStart);
+        weekEnd.setDate(weekEnd.getDate() + 7);
+        chartBuckets.push({
+          label: weekStart.toLocaleString(undefined, { month: "short", day: "numeric" }),
+          key: `w-${weekStart.getTime()}`,
+          startMs: weekStart.getTime(),
+          endMs: weekEnd.getTime(),
+        });
+      }
+    } else if (volunteerPeriodFilter === "yearly") {
+      for (let i = 3; i >= 0; i--) {
+        const y = cur.getFullYear() - i;
+        chartBuckets.push({
+          label: String(y),
+          key: String(y),
+          startMs: new Date(y, 0, 1).getTime(),
+          endMs: new Date(y + 1, 0, 1).getTime(),
+        });
+      }
+    } else {
+      for (let i = 5; i >= 0; i--) {
+        const d = new Date(cur.getFullYear(), cur.getMonth() - i, 1);
+        chartBuckets.push({
+          label: d.toLocaleString(undefined, { month: "short", year: "2-digit" }),
+          key: `${d.getFullYear()}-${d.getMonth()}`,
+          startMs: d.getTime(),
+          endMs: new Date(d.getFullYear(), d.getMonth() + 1, 1).getTime(),
+        });
+      }
     }
 
-    const monthlyByEmail: Record<string, number[]> = {};
-    topVolunteers.forEach((v) => { monthlyByEmail[v.emailKey] = months.map(() => 0); });
+    const byEmailByBucket: Record<string, number[]> = {};
+    topVolunteers.forEach((v) => { byEmailByBucket[v.emailKey] = chartBuckets.map(() => 0); });
     (assignments || []).forEach((a) => {
       if (!isCompletedConfirmed(a)) return;
       const ms = getDateMs(a);
       if (!ms) return;
       const email = (a.volunteerEmail || "").toLowerCase();
-      if (!monthlyByEmail[email]) return;
-      const d = new Date(ms);
-      const key = `${d.getFullYear()}-${d.getMonth()}`;
-      const idx = months.findIndex((m) => m.key === key);
-      if (idx >= 0) monthlyByEmail[email][idx] += 1;
+      if (!byEmailByBucket[email]) return;
+      const idx = chartBuckets.findIndex((b) => ms >= b.startMs && ms < b.endMs);
+      if (idx >= 0) byEmailByBucket[email][idx] += 1;
     });
 
-    const trendChartData = months.map((m, idx) => {
-      const row: Record<string, string | number> = { month: m.month };
+    const trendChartData = chartBuckets.map((b, idx) => {
+      const row: Record<string, string | number> = { label: b.label };
       topVolunteers.slice(0, 3).forEach((v) => {
-        row[`v_${v.id}`] = monthlyByEmail[v.emailKey]?.[idx] ?? 0;
+        row[`v_${v.id}`] = byEmailByBucket[v.emailKey]?.[idx] ?? 0;
       });
       return row;
     });
 
     const avgPerMonth = topVolunteers.map((v) => {
-      const hist = monthlyByEmail[v.emailKey] || [];
+      const hist = byEmailByBucket[v.emailKey] || [];
       const sum = hist.reduce((a, b) => a + b, 0);
-      const monthsActive = hist.filter((x) => x > 0).length || 1;
-      return { ...v, avgMonthly: Math.round((sum / Math.max(monthsActive, 3)) * 10) / 10, forecast: Math.round((sum / Math.max(monthsActive, 3)) * 10) / 10 };
+      const bucketsActive = hist.filter((x) => x > 0).length || 1;
+      return { ...v, avgMonthly: Math.round((sum / Math.max(bucketsActive, 3)) * 10) / 10, forecast: Math.round((sum / Math.max(bucketsActive, 3)) * 10) / 10 };
     });
+
+    const chartTitle = volunteerPeriodFilter === "weekly"
+      ? "Top 3 volunteers – services per week (last 6 weeks)"
+      : volunteerPeriodFilter === "yearly"
+        ? "Top 3 volunteers – services per year (last 4 years)"
+        : "Top 3 volunteers – services per month (last 6 months)";
+
+    const chartXLabel = volunteerPeriodFilter === "weekly" ? "Week" : volunteerPeriodFilter === "yearly" ? "Year" : "Month";
 
     return {
       topVolunteers,
@@ -493,6 +507,8 @@ const Dashboard = () => {
       trendChartData,
       avgPerMonth,
       periodLabel: volunteerPeriodFilter === "weekly" ? "7 days" : volunteerPeriodFilter === "monthly" ? "30 days" : "12 months",
+      chartTitle,
+      chartXLabel,
     };
   }, [approvedVolunteers, ratingsMap, tasksMap, assignments, volunteerPeriodFilter]);
 
@@ -721,10 +737,75 @@ const Dashboard = () => {
           </TabsList>
 
           <TabsContent value="overview" className="space-y-6 mt-0">
-        {/* Customize forecast - above graphs, popup */}
-        <div className="flex items-center justify-between">
-          <p className="text-sm text-muted-foreground">Forecast uses last {forecastWindow} months · {forecastHorizon} month{forecastHorizon > 1 ? "s" : ""} ahead · {forecastMethod}</p>
-          <Popover>
+        {/* Customize forecast + Download Report - above graphs */}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-sm text-muted-foreground">Forecast uses last {forecastWindow} months · {forecastHorizon} month{forecastHorizon > 1 ? "s" : ""} ahead · <span className="font-bold text-foreground uppercase">{forecastMethod}</span></p>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" className="gap-1.5" onClick={async () => {
+              const completed = (assignments || []).filter((a) => a.status === "completed" && a.guardianConfirmed);
+              const qv = query(collection(db, "pendingVolunteers"), where("status", "in", ["approved"]));
+              const snap = await getDocs(qv);
+              const fromPending = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })).filter((v) => (v.status || "").toLowerCase() === "approved");
+              const seenEmails = new Set<string>();
+              const allVolunteers: Array<{ name: string; email: string; rating: number | null; totalServices: number; specialty: string }> = [];
+              for (const v of fromPending) {
+                const emailKey = (v.email || "").toLowerCase();
+                if (!emailKey || seenEmails.has(emailKey)) continue;
+                seenEmails.add(emailKey);
+                const r = ratingsMap[emailKey];
+                const avg = r ? r.sum / r.count : null;
+                allVolunteers.push({
+                  name: v.fullName || v.name || v.email || "Volunteer",
+                  email: emailKey,
+                  rating: avg,
+                  totalServices: tasksMap[emailKey] || 0,
+                  specialty: Array.isArray(v.services) ? v.services.slice(0, 2).join(" & ") : (v.services || "Care Services"),
+                });
+              }
+              for (const a of completed) {
+                const emailKey = (a.volunteerEmail || "").toLowerCase();
+                if (!emailKey || seenEmails.has(emailKey)) continue;
+                seenEmails.add(emailKey);
+                const r = ratingsMap[emailKey];
+                const avg = r ? r.sum / r.count : null;
+                allVolunteers.push({
+                  name: emailKey,
+                  email: emailKey,
+                  rating: avg,
+                  totalServices: tasksMap[emailKey] || 0,
+                  specialty: "—",
+                });
+              }
+              allVolunteers.sort((a, b) => a.name.localeCompare(b.name));
+              generateAdminReport({
+                totalRequests,
+                pendingRequests,
+                activeVolunteers,
+                completedThisWeek,
+                cancellationRate: cancellationAnalytics.rate,
+                capacityForecast,
+                forecastMethod,
+                serviceDemandForecast,
+                cancellationReasons: cancellationAnalytics.reasonData,
+                monthlyTrend,
+                topServices,
+                allVolunteers,
+                requests: requests || [],
+                completedAssignments: completed.map((a) => ({
+                  serviceDateTS: a.serviceDateTS,
+                  volunteerEmail: a.volunteerEmail,
+                  elderName: a.elderName,
+                  services: a.services,
+                  servicesStr: Array.isArray(a.services) ? a.services.join(", ") : a.services,
+                  startTimeText: a.startTimeText,
+                  endTimeText: a.endTimeText,
+                })),
+              });
+            }}>
+              <Download className="h-3.5 w-3.5" />
+              Download report
+            </Button>
+            <Popover>
             <PopoverTrigger asChild>
               <Button variant="outline" size="sm" className="gap-1.5">
                 <Settings2 className="h-3.5 w-3.5" />
@@ -769,7 +850,8 @@ const Dashboard = () => {
                 </div>
               </div>
             </PopoverContent>
-          </Popover>
+            </Popover>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -788,18 +870,29 @@ const Dashboard = () => {
                 </div>
               ) : (
               <ResponsiveContainer width="100%" height={240}>
-                <BarChart data={weeklyData}>
+                <BarChart data={weeklyData} margin={{ top: 40, right: 10, left: 60, bottom: 25 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                  <XAxis dataKey="day" stroke="hsl(var(--muted-foreground))" fontSize={12} />
-                  <YAxis stroke="hsl(var(--muted-foreground))" fontSize={12} />
+                  <XAxis 
+                    dataKey="day" 
+                    stroke="hsl(var(--muted-foreground))" 
+                    fontSize={12}
+                    label={{ value: "Day of week", position: "insideBottom", offset: -5 }}
+                  />
+                  <YAxis 
+                    stroke="hsl(var(--muted-foreground))" 
+                    fontSize={12}
+                    label={{ value: "Completed services", angle: -90, position: "insideLeft", dy: 80 }}
+                  />
                   <Tooltip 
                     contentStyle={{ 
                       backgroundColor: "hsl(var(--card))", 
                       border: "1px solid hsl(var(--border))",
                       borderRadius: "8px"
-                    }} 
+                    }}
+                    labelFormatter={(label) => `Day: ${label}`}
+                    formatter={(value: number) => [value, "Completed services"]}
                   />
-                  <Bar dataKey="requests" fill="hsl(var(--primary))" radius={[8, 8, 0, 0]} />
+                  <Bar dataKey="requests" name="Completed services" fill="hsl(var(--primary))" radius={[8, 8, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
               )}
@@ -812,10 +905,19 @@ const Dashboard = () => {
             </CardHeader>
             <CardContent>
               <ResponsiveContainer width="100%" height={240}>
-                <LineChart data={monthlyTrend}>
+                <LineChart data={monthlyTrend} margin={{ top: 40, right: 10, left: 60, bottom: 25 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                  <XAxis dataKey="month" stroke="hsl(var(--muted-foreground))" fontSize={12} />
-                  <YAxis stroke="hsl(var(--muted-foreground))" fontSize={12} />
+                  <XAxis 
+                    dataKey="month" 
+                    stroke="hsl(var(--muted-foreground))" 
+                    fontSize={12}
+                    label={{ value: "Month", position: "insideBottom", offset: -5 }}
+                  />
+                  <YAxis 
+                    stroke="hsl(var(--muted-foreground))" 
+                    fontSize={12}
+                    label={{ value: "Completed services", angle: -90, position: "insideLeft", dy: 80 }}
+                  />
                   <Tooltip
                     contentStyle={{
                       backgroundColor: "hsl(var(--card))",
@@ -859,7 +961,7 @@ const Dashboard = () => {
           <CardHeader>
             <CardTitle className="text-lg">Forecast</CardTitle>
             <p className="text-sm text-muted-foreground">
-              Based on last {forecastWindow} months · {forecastHorizon} month{forecastHorizon > 1 ? "s" : ""} ahead · {forecastMethod}
+              Based on last {forecastWindow} months · {forecastHorizon} month{forecastHorizon > 1 ? "s" : ""} ahead · <span className="font-bold text-foreground uppercase">{forecastMethod}</span>
             </p>
           </CardHeader>
           <CardContent className="space-y-6">
@@ -867,7 +969,7 @@ const Dashboard = () => {
               <div className="rounded-xl border p-4 bg-muted/30">
                 <h4 className="text-sm font-medium mb-3">Service Demand Forecast</h4>
                 <p className="text-xs text-muted-foreground mb-3">
-                  Estimated requests per service type for next month. Uses {forecastMethod === "trend" ? "linear regression" : "the average of"} the last {forecastWindow} months.
+                  Estimated requests per service type for next month. Uses <span className="font-bold text-foreground uppercase">{forecastMethod === "trend" ? "linear regression" : "average"}</span> of the last {forecastWindow} months.
                 </p>
                 {serviceDemandForecast.length === 0 ? (
                   <p className="text-sm text-muted-foreground">Insufficient data to forecast.</p>
@@ -919,37 +1021,28 @@ const Dashboard = () => {
                 </div>
               </div>
             </div>
-            <div className="rounded-lg border border-primary/20 bg-primary/5 p-4">
-              <h4 className="text-sm font-medium mb-2 flex items-center gap-2">
+            <div className="rounded-lg border border-primary/20 bg-primary/5 p-4 space-y-3">
+              <h4 className="text-sm font-medium flex items-center gap-2">
                 <Lightbulb className="h-4 w-4 text-primary" />
                 How the forecast works
               </h4>
-              <ul className="space-y-1.5 text-sm text-muted-foreground">
-                <li>• <strong>Trend:</strong> Calculates a linear regression on historical data to project future values.</li>
-                <li>• <strong>Average:</strong> Computes the mean of past months to forecast future values.</li>
-              </ul>
+              <div className="space-y-2 text-sm text-muted-foreground">
+                <p className="font-medium text-foreground">Methods</p>
+                <ul className="space-y-1.5">
+                  <li>• <strong>Trend (linear regression):</strong> Fits a straight line to the last {forecastWindow} months of data and extends it forward. Best suited when demand or completions show clear growth or decline — it captures that direction and projects it.</li>
+                  <li>• <strong>Average:</strong> Uses the mean of past months and repeats it for future months. Best suited when numbers are fairly stable with no strong pattern — it smooths out one-off spikes or dips.</li>
+                </ul>
+                <p className="font-medium text-foreground pt-2">What the results mean</p>
+                <ul className="space-y-1.5">
+                  <li>• <strong>Monthly Trend chart:</strong> Solid line = actual completed services. Dashed line = forecast for the next {forecastHorizon} month{forecastHorizon > 1 ? "s" : ""}.</li>
+                  <li>• <strong>Capacity vs Demand:</strong> Compares projected volunteer completions to forecasted requests. Shortage = more demand than capacity; surplus = capacity exceeds demand; balanced = roughly even.</li>
+                  <li>• <strong>Service Demand Forecast:</strong> Estimated requests per service type for the next month, based on the selected window and method.</li>
+                </ul>
+              </div>
             </div>
           </CardContent>
         </Card>
 
-        <Card className="shadow-lg border-0">
-          <CardHeader>
-            <CardTitle className="text-lg">Form Completion Time</CardTitle>
-            <p className="text-sm text-muted-foreground">Average time users spend on the service request form (guardians) and volunteer application — helps identify UX friction</p>
-          </CardHeader>
-          <CardContent>
-            <div className="grid sm:grid-cols-2 gap-4">
-              <div className="rounded-xl border p-4 bg-muted/40">
-                <div className="text-xs text-muted-foreground mb-1">Guardians / Elders</div>
-                <div className="text-2xl font-bold">{formatDuration(avgElderMs)}</div>
-              </div>
-              <div className="rounded-xl border p-4 bg-muted/40">
-                <div className="text-xs text-muted-foreground mb-1">Volunteers</div>
-                <div className="text-2xl font-bold">{formatDuration(avgVolunteerMs)}</div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
           </TabsContent>
 
           <TabsContent value="requests" className="space-y-6 mt-0">
@@ -995,20 +1088,32 @@ const Dashboard = () => {
                     : "No pending in range"}
                 </p>
               </div>
-              <div className="min-h-[200px]">
+              <div className="min-h-[200px] space-y-2">
+                <h4 className="text-sm font-medium">Pending requests by month</h4>
                 <ResponsiveContainer width="100%" height={200}>
-                  <BarChart data={rangePendingData.chartData}>
+                  <BarChart data={rangePendingData.chartData} margin={{ top: 40, right: 10, left: 60, bottom: 25 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                    <XAxis dataKey="month" stroke="hsl(var(--muted-foreground))" fontSize={11} />
-                    <YAxis stroke="hsl(var(--muted-foreground))" fontSize={11} />
+                    <XAxis 
+                      dataKey="month" 
+                      stroke="hsl(var(--muted-foreground))" 
+                      fontSize={11}
+                      label={{ value: "Month", position: "insideBottom", offset: -5 }}
+                    />
+                    <YAxis 
+                      stroke="hsl(var(--muted-foreground))" 
+                      fontSize={11}
+                      label={{ value: "Pending requests", angle: -90, position: "insideLeft", dy: 60 }}
+                    />
                     <Tooltip
                       contentStyle={{
                         backgroundColor: "hsl(var(--card))",
                         border: "1px solid hsl(var(--border))",
                         borderRadius: "8px",
                       }}
+                      labelFormatter={(label) => `Month: ${label}`}
+                      formatter={(value: number) => [value, "Pending requests"]}
                     />
-                    <Bar dataKey="pending" fill="hsl(var(--primary))" name="Pending" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="pending" fill="hsl(var(--primary))" name="Pending requests" radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -1174,18 +1279,28 @@ const Dashboard = () => {
 
             {volunteerAnalytics.trendChartData.length > 0 && (
               <div className="rounded-xl border p-4 bg-muted/30">
-                <h4 className="text-sm font-medium mb-4">Top 3 volunteers – services per month (last 6 months)</h4>
+                <h4 className="text-sm font-medium mb-4">{volunteerAnalytics.chartTitle}</h4>
                 <ResponsiveContainer width="100%" height={200}>
-                  <LineChart data={volunteerAnalytics.trendChartData}>
+                  <LineChart data={volunteerAnalytics.trendChartData} margin={{ top: 40, right: 10, left: 60, bottom: 25 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                    <XAxis dataKey="month" stroke="hsl(var(--muted-foreground))" fontSize={11} />
-                    <YAxis stroke="hsl(var(--muted-foreground))" fontSize={11} />
+                    <XAxis 
+                      dataKey="label" 
+                      stroke="hsl(var(--muted-foreground))" 
+                      fontSize={11}
+                      label={{ value: volunteerAnalytics.chartXLabel, position: "insideBottom", offset: -5 }}
+                    />
+                    <YAxis 
+                      stroke="hsl(var(--muted-foreground))" 
+                      fontSize={11}
+                      label={{ value: "Services completed", angle: -90, position: "insideLeft", dy: 80 }}
+                    />
                     <Tooltip
                       contentStyle={{
                         backgroundColor: "hsl(var(--card))",
                         border: "1px solid hsl(var(--border))",
                         borderRadius: "8px",
                       }}
+                      labelFormatter={(label) => `${volunteerAnalytics.chartXLabel}: ${label}`}
                     />
                     {volunteerAnalytics.topVolunteers.slice(0, 3).map((v, i) => {
                       const colors = ["hsl(var(--primary))", "hsl(var(--primary-dark))", "hsl(198 63% 69%)"];
@@ -1420,18 +1535,29 @@ const Dashboard = () => {
               <div className="rounded-xl border p-4 bg-muted/30">
                 <h4 className="text-sm font-medium mb-4">Cancellations over time (last 6 months)</h4>
                 <ResponsiveContainer width="100%" height={180}>
-                  <BarChart data={cancellationAnalytics.chartData}>
+                  <BarChart data={cancellationAnalytics.chartData} margin={{ top: 40, right: 10, left: 60, bottom: 25 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                    <XAxis dataKey="month" stroke="hsl(var(--muted-foreground))" fontSize={11} />
-                    <YAxis stroke="hsl(var(--muted-foreground))" fontSize={11} />
+                    <XAxis 
+                      dataKey="month" 
+                      stroke="hsl(var(--muted-foreground))" 
+                      fontSize={11}
+                      label={{ value: "Month", position: "insideBottom", offset: -5 }}
+                    />
+                    <YAxis 
+                      stroke="hsl(var(--muted-foreground))" 
+                      fontSize={11}
+                      label={{ value: "Cancellations", angle: -90, position: "insideLeft", dy: 50 }}
+                    />
                     <Tooltip
                       contentStyle={{
                         backgroundColor: "hsl(var(--card))",
                         border: "1px solid hsl(var(--border))",
                         borderRadius: "8px",
                       }}
+                      labelFormatter={(label) => `Month: ${label}`}
+                      formatter={(value: number) => [value, "Cancellations"]}
                     />
-                    <Bar dataKey="cancelled" fill="hsl(var(--destructive))" name="Cancelled" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="cancelled" fill="hsl(var(--destructive))" name="Cancellations" radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>

@@ -14,7 +14,6 @@ import { db } from "@/lib/firebase";
 import { addDoc, collection, doc, onSnapshot, orderBy, query, serverTimestamp, updateDoc, where } from "firebase/firestore";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Star as StarIcon } from "lucide-react";
-import ElderChatbot from "@/components/elder/ElderChatbot";
 import { useToast } from "@/components/ui/use-toast";
 
 const ElderNavbar = () => {
@@ -328,7 +327,6 @@ const MySchedule = () => {
           </div>
         </DialogContent>
       </Dialog>
-      <ElderChatbot />
     </div>
   );
 };

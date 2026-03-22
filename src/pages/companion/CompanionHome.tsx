@@ -4,9 +4,10 @@ import { logout, getCurrentUser, subscribeToAuth, type AuthProfile } from "@/lib
 import logo from "@/assets/logo.png";
 import volunteerHero from "@/assets/volunteer-hero.jpg";
 import { useEffect, useMemo, useState } from "react";
-import { Calendar, ClipboardList, Clock, UserCheck, CheckCircle2, Bell, MapPin, Phone, Award, Heart, TrendingUp, Star } from "lucide-react";
+import { Calendar, ClipboardList, Clock, UserCheck, CheckCircle2, Bell, MapPin, Phone, Award, Heart, TrendingUp, Star, Download } from "lucide-react";
 import { db } from "@/lib/firebase";
 import { collection, onSnapshot, query, where } from "firebase/firestore";
+import { generateVolunteerReport } from "@/lib/report-utils";
 
 const CompanionNavbar = () => {
   const user = getCurrentUser();
@@ -131,6 +132,40 @@ const CompanionHome = () => {
                     Find Requests
                   </Button>
                 </Link>
+                <Button size="lg" variant="outline" className="gap-2" onClick={() => {
+                  const completed = assignments.filter(isCompletedConfirmed);
+                  const upcoming = assignments.filter((a) => !(a.status === "completed" && a.guardianConfirmed));
+                  generateVolunteerReport({
+                    volunteerName: displayName,
+                    totalCompletedServices,
+                    totalCompletedHours,
+                    peopleHelped,
+                    ratingAvg,
+                    ratingCount,
+                    levelLabel: level.label,
+                    hoursThisWeek,
+                    upcomingThisWeek: weekAssignments.length,
+                    completedAssignments: completed.map((a) => ({
+                      serviceDateTS: a.serviceDateTS,
+                      elderName: a.elderName,
+                      services: a.services,
+                      startTimeText: a.startTimeText,
+                      endTimeText: a.endTimeText,
+                      durationMinutes: durationMinutes(a),
+                    })),
+                    upcomingAssignments: upcoming.map((a) => ({
+                      serviceDateTS: a.serviceDateTS,
+                      elderName: a.elderName,
+                      services: a.services,
+                      startTimeText: a.startTimeText,
+                      endTimeText: a.endTimeText,
+                      status: a.status === "completed" && a.guardianConfirmed ? "Completed" : a.status || "Assigned",
+                    })),
+                  });
+                }}>
+                  <Download className="h-5 w-5" />
+                  Download report
+                </Button>
               </div>
             </div>
             <div className="relative">

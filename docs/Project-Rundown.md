@@ -188,27 +188,9 @@ useEffect(() => {
 ```
 
 ### 7) Dashboards (admin & volunteer analytics)
-Admin aggregates requests, assignments, ratings, and form‑metrics to render trends, top volunteers, cancellations, and average form completion time (public & in‑app). Volunteers see their week’s upcoming hours and a paginated activity log.
+Admin aggregates requests, assignments, and ratings to render trends, top volunteers, and cancellations. Volunteers see their week’s upcoming hours and a paginated activity log.
 
 Key file: `src/pages/admin/Dashboard.tsx`
-
-```ts
-// Form completion time averages
-// src/pages/admin/Dashboard.tsx
-useEffect(() => {
-  const unsub = onSnapshot(collection(db, "formMetrics"), (snap) => {
-    let elderSum = 0, elderCount = 0, volunteerSum = 0, volunteerCount = 0;
-    snap.docs.forEach((d) => {
-      const m = d.data() as any, dur = Number(m.durationMs) || 0;
-      if (m.type === "elder_request_service") { elderSum += dur; elderCount += 1; }
-      if (m.type === "volunteer_application") { volunteerSum += dur; volunteerCount += 1; }
-    });
-    setAvgElderMs(elderCount ? elderSum / elderCount : null);
-    setAvgVolunteerMs(volunteerCount ? volunteerSum / volunteerCount : null);
-  });
-  return () => unsub();
-}, []);
-```
 
 ### 8) Volunteer list (edit & terminate with cross‑collection sync)
 The admin Volunteer List allows editing name/phone/address/gender/services. Edits write to both `pendingVolunteers` and matching `users` docs to keep the entire app in sync. Terminations flip `status='terminated'` in both places; `auth.ts` then blocks login and auto‑logs out.
@@ -266,7 +248,7 @@ await addDoc(collection(db, 'ratings'), {
 ```
 
 ### 10) Security rules (minimum needed for the flows above)
-Signed‑in users can read `serviceRequests` and `formMetrics`; public forms can create `formMetrics` entries for analytics. Assignments reads are permitted for signed‑in users to support availability checks and dashboards; field‑level updates remain restricted by actor.
+Signed‑in users can read `serviceRequests`. Assignments reads are permitted for signed‑in users to support availability checks and dashboards; field‑level updates remain restricted by actor.
 
 Key file: `firebase.rules`
 
@@ -276,12 +258,6 @@ match /serviceRequests/{id} {
   allow create: if isSignedIn();
   allow update: if isSignedIn();
   allow delete: if false;
-}
-
-match /formMetrics/{id} {
-  allow create: if true && ('type' in request.resource.data) && ('durationMs' in request.resource.data);
-  allow read: if isSignedIn();
-  allow update, delete: if false;
 }
 ```
 

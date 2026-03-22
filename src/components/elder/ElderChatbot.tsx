@@ -1,8 +1,46 @@
 import { useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { MessageCircle, Send, Minimize2 } from "lucide-react";
 import { useChatVolunteers, type ChatVolunteer } from "@/hooks/use-chat-volunteers";
+
+/** Parse message text and render [link text](/path) as clickable Link components. Preserves newlines. */
+const MessageWithLinks = ({ text, className }: { text: string; className?: string }) => {
+  const parseLine = (line: string) => {
+    const parts: (string | { label: string; path: string })[] = [];
+    const regex = /\[([^\]]+)\]\(\s*([^)\s]+)\s*\)/g;
+    let lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = regex.exec(line)) !== null) {
+      if (match.index > lastIndex) parts.push(line.slice(lastIndex, match.index));
+      parts.push({ label: match[1], path: match[2] });
+      lastIndex = match.index + match[0].length;
+    }
+    if (lastIndex < line.length) parts.push(line.slice(lastIndex));
+    return parts;
+  };
+
+  const lines = text.split("\n");
+  return (
+    <span className={className}>
+      {lines.map((line, lineIdx) => (
+        <span key={lineIdx} className="block">
+          {parseLine(line).map((p, i) =>
+            typeof p === "string" ? (
+              <span key={i}>{p}</span>
+            ) : (
+              <Link key={i} to={p.path.startsWith("/") ? p.path : `/${p.path}`} className="text-primary underline font-medium hover:underline">
+                {p.label}
+              </Link>
+            )
+          )}
+          {lineIdx < lines.length - 1 && <br />}
+        </span>
+      ))}
+    </span>
+  );
+};
 
 type ChatMessage = {
   type: "bot" | "user";
@@ -188,7 +226,7 @@ const ElderChatbot = () => {
             : "are some volunteers on ElderEase with strong records"
         }:\n\n` +
         lines.join("\n") +
-        "\n\nYou can see more details on the Browse Services page, and choose a preferred volunteer when you make a request."
+        "\n\nYou can choose a preferred volunteer when you [request a service](/elder/request-service)."
       );
     }
 
@@ -243,7 +281,7 @@ const ElderChatbot = () => {
         "Based on the current ratings on ElderEase, these volunteers presently have lower average scores. " +
         "This can change over time as they complete more visits and receive additional feedback:\n\n" +
         lines.join("\n") +
-        "\n\nIf you are concerned about ratings, you can always choose someone with more visits or a higher score on the Browse Services page."
+        "\n\nIf you are concerned about ratings, you can always choose someone with more visits or a higher score when you [request a service](/elder/request-service)."
       );
     }
 
@@ -295,7 +333,7 @@ const ElderChatbot = () => {
 
     return (
       lines.join("\n\n") +
-      "\n\nYou can confirm these details on the Browse Services page, where each volunteer card shows their services, rating, and completed visits."
+      "\n\nYou can see volunteer details when you [request a service](/elder/request-service), where you can pick a preferred volunteer."
     );
   };
 
@@ -354,7 +392,7 @@ const ElderChatbot = () => {
           `• Service fee (5%): ${fmt(fee)}\n\n` +
           `So before any dynamic adjustment, the estimated total would be about ${fmt(subtotal)}.\n\n` +
           "When your request is assigned to a volunteer, ElderEase may apply a small dynamic pricing adjustment " +
-          "based on demand and the volunteer’s performance. The exact final total will appear in your receipt under Notifications."
+          "based on demand and the volunteer’s performance. The exact final total will appear in your receipt under [Notifications](/elder/notifications)."
         );
       }
     }
@@ -374,7 +412,7 @@ const ElderChatbot = () => {
       "• Multiplying each selected service by the number of hours you chose\n" +
       "• Adding a small 5% service fee\n" +
       "• Optionally applying a dynamic pricing adjustment when demand is high or a volunteer has a very strong performance record\n\n" +
-      "The exact total for your request, including any dynamic adjustment and the 5% fee, will appear in your receipt under Notifications after a volunteer is assigned."
+      "The exact total for your request, including any dynamic adjustment and the 5% fee, will appear in your receipt under [Notifications](/elder/notifications) after a volunteer is assigned."
     );
   };
 
@@ -499,7 +537,7 @@ const ElderChatbot = () => {
                       : "bg-white border text-foreground rounded-bl-sm"
                   }`}
                 >
-                  <p className="text-sm whitespace-pre-line">{m.message}</p>
+                  <MessageWithLinks text={m.message} className="text-sm whitespace-pre-line" />
                   <p
                     className={`text-[10px] mt-1 text-right ${
                       m.type === "user" ? "text-primary-foreground/70" : "text-muted-foreground"

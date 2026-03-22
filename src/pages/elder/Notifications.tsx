@@ -8,7 +8,6 @@ import { db } from "@/lib/firebase";
 import { collection, onSnapshot, orderBy, query, where } from "firebase/firestore";
 import { Separator } from "@/components/ui/separator";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import ElderChatbot from "@/components/elder/ElderChatbot";
 
 const ElderNavbar = () => {
   const user = getCurrentUser();
@@ -179,7 +178,6 @@ const Notifications = () => {
           })}
         </div>
       </main>
-      <ElderChatbot />
     </div>
   );
 };

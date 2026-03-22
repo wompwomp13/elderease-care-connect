@@ -11,6 +11,7 @@ import Signup from "./pages/Signup";
 import SignupVolunteer from "./pages/SignupVolunteer";
 import NotFound from "./pages/NotFound";
 import { getCurrentUser } from "@/lib/auth";
+import ElderLayout from "@/components/layout/ElderLayout";
 import ElderHome from "@/pages/elder/ElderHome";
 import ElderNotifications from "@/pages/elder/Notifications";
 import RequestService from "@/pages/elder/RequestService";
@@ -44,13 +45,15 @@ const App = () => (
           <Route path="/signup/volunteer" element={<SignupVolunteer />} />
 
           {/* Role sections */}
-          <Route path="/elder" element={<ElderHome />} />
-          <Route path="/elder/notifications" element={<ElderNotifications />} />
-          <Route path="/elder/schedule" element={<MySchedule />} />
-          <Route path="/elder/request-service" element={<RequestService />} />
-          <Route path="/elder/services-info" element={<ServicesInfo />} />
-          <Route path="/elder/browse-services" element={<BrowseServices />} />
-          <Route path="/elder/payment-confirmation" element={<PaymentConfirmation />} />
+          <Route path="/elder" element={<ElderLayout />}>
+            <Route index element={<ElderHome />} />
+            <Route path="notifications" element={<ElderNotifications />} />
+            <Route path="schedule" element={<MySchedule />} />
+            <Route path="request-service" element={<RequestService />} />
+            <Route path="services-info" element={<ServicesInfo />} />
+            <Route path="browse-services" element={<BrowseServices />} />
+            <Route path="payment-confirmation" element={<PaymentConfirmation />} />
+          </Route>
           <Route path="/admin" element={<Dashboard />} />
           <Route path="/admin/applications" element={<VolunteerApplications />} />
           <Route path="/admin/volunteers" element={<VolunteerList />} />

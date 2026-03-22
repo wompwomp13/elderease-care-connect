@@ -6,7 +6,6 @@ import logo from "@/assets/logo.png";
 import companionshipImage from "@/assets/elder-companionship.jpg";
 import { useMemo, useRef, useState, useEffect } from "react";
 import { HeartHandshake, ShoppingBasket, Home, Users, Calendar, Bell, MessageSquare, Sparkles } from "lucide-react";
-import ElderChatbot from "@/components/elder/ElderChatbot";
 import { db } from "@/lib/firebase";
 import { collection, doc, onSnapshot, query, serverTimestamp, updateDoc, where } from "firebase/firestore";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -533,8 +532,6 @@ const ElderHome = () => {
           </div>
         </div>
       </main>
-
-      <ElderChatbot />
 
       {/* Visit Details Dialog */}
       <Dialog open={showDetails} onOpenChange={setShowDetails}>

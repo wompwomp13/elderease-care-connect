@@ -28,7 +28,7 @@ const knowledgeBase = [
     content:
       "ElderEase is a platform that helps elderly users and their guardians arrange support such as companionship, home visits, light housekeeping, running errands, and social activities. " +
       "From the home pages, guardians can see an overview of their loved one's upcoming visits, pending service requests, and helpful tips. " +
-      "Key areas of the site include: Browse Services (to see available services and example volunteers), Request Service (to submit a new request), Schedule/My Schedule (to see upcoming visits), Notifications (to see updates and receipts), and pages describing services and how ElderEase works. " +
+      "Key areas of the site include: Request Service (to submit a new request and pick a preferred volunteer), Schedule/My Schedule (to see upcoming visits), and Notifications (to see updates and receipts). " +
       "The ElderEase Assistant chatbot is available on Elder/Guardian pages as a floating button in the corner; when opened, it provides guidance about services, volunteers, pricing, and how to use different pages on the website.",
   },
   {
@@ -71,7 +71,7 @@ const knowledgeBase = [
     id: "dynamic-pricing",
     tags: ["price", "pricing", "cost", "dynamic pricing", "rates"],
     content:
-      "On ElderEase, pricing is shown transparently on the Browse Services and Request Service pages. Base hourly rates are set per service in Philippine pesos (PHP), for example: Companionship, Light Housekeeping, Running Errands, and Home Visits each have a clear per-hour rate. When a guardian submits a request, ElderEase calculates a receipt using: the selected services, the number of hours per service, a small 5% service fee, and a dynamic pricing adjustment that can increase the effective rate slightly when demand is high or when a volunteer has a very strong performance record. The final total, together with any dynamic pricing tier, is shown in the receipt that appears in Notifications.",
+      "On ElderEase, pricing is shown transparently on the Request Service page. Base hourly rates are set per service in Philippine pesos (PHP), for example: Companionship, Light Housekeeping, Running Errands, and Home Visits each have a clear per-hour rate. When a guardian submits a request, ElderEase calculates a receipt using: the selected services, the number of hours per service, a small 5% service fee, and a dynamic pricing adjustment that can increase the effective rate slightly when demand is high or when a volunteer has a very strong performance record. The final total, together with any dynamic pricing tier, is shown in the receipt that appears in Notifications.",
   },
   {
     id: "how-to-request-service",
@@ -95,8 +95,8 @@ const knowledgeBase = [
     id: "volunteers-and-ratings",
     tags: ["volunteer", "guardian", "highly rated", "ratings", "trusted"],
     content:
-      "On the Browse Services page ElderEase shows background-checked, highly rated volunteers, together with their average ratings and number of completed sessions. " +
-      "Guardians can compare volunteers directly on that page and may also pick a preferred volunteer when requesting a service. " +
+      "ElderEase has background-checked, highly rated volunteers with average ratings and number of completed sessions. " +
+      "Guardians can pick a preferred volunteer when requesting a service on the Request Service page. " +
       "The system checks availability and existing assignments to avoid scheduling conflicts.",
   },
   {
@@ -168,9 +168,11 @@ app.post("/api/chat", async (req, res) => {
       "2) Use only the information provided from the ElderEase website context. Do NOT access or speculate about anything outside of ElderEase. Never use external knowledge such as news, general facts, or personal data. Never guess.\n" +
       "3) Treat all questions related to the ElderEase website as in-scope, including: services provided, volunteer information and ratings, how to use or navigate the site (for example: 'How do I use this site?' or 'Where do I request a service?'), and the general purpose and features of ElderEase.\n" +
       "4) Maintain context from previous messages in the conversation. Refer back naturally to what the user has already asked, so the chat feels continuous and coherent.\n" +
-      "5) Ask gentle follow-up questions when useful, and suggest clear next steps. For example, you can say things like: 'Would you like to see the types of services we offer next?' or 'I can guide you to the Request Service page if you'd like.'\n" +
+      "5) Ask gentle follow-up questions when useful, and suggest clear next steps.\n" +
       "6) If a question is truly unrelated to ElderEase, politely respond with something like: 'I’m here to answer questions about ElderEase, our services, volunteers, and how to use this website. Could you ask something about that?'\n" +
       "7) Keep a warm, calm, and accessible tone that is easy for older adults and guardians to read. Use short paragraphs, simple language, and reassuring phrasing.\n\n" +
+      "LINKS: You can include clickable page links using this format: [link text](/elder/path). Available paths: Request Service = /elder/request-service, My Schedule = /elder/schedule, Notifications = /elder/notifications. There is NO Browse Services page.\n" +
+      "LINK RULES: Only include a link when the user explicitly asks to go to a page, asks for a link, or when you are specifically directing them to take an action (e.g. 'book a service', 'check your schedule', 'see your receipts'). Do NOT include links in every reply. If the user asks a general question like 'what services do you offer' or 'how does pricing work', just answer the question without adding links. Only add a link if it directly answers what the user is asking for.\n\n" +
       "STRICT SAFETY RULES:\n" +
       "- Only answer using the website context provided in this conversation. If a detail (such as a specific volunteer's rating or visit count) is not present in that context or in previous valid turns, say you cannot see that information and suggest checking the appropriate ElderEase page instead.\n" +
       "- Never invent specific volunteer names, ratings, addresses, phone numbers, or visit counts.\n" +
@@ -178,7 +180,7 @@ app.post("/api/chat", async (req, res) => {
       "STYLE:\n" +
       "- Make every answer feel like a real conversation, not a static FAQ entry.\n" +
       "- It is fine if you repeat information, but always adapt it to the current question and the prior chat history.\n" +
-      "- When appropriate, end with a gentle question or suggestion that helps the user with their next step on ElderEase.";
+      "- When appropriate, end with a gentle question or suggestion that helps the user with their next step on ElderEase. Do NOT attach links to every reply — only when the user asks for directions to a page or you are specifically telling them to take an action.";
 
     const conversationMessages = [];
     for (const h of history) {
@@ -201,13 +203,38 @@ app.post("/api/chat", async (req, res) => {
             contextText +
             "\n\nThe user is now asking:\n" +
             message +
-            "\n\nAnswer ONLY using the website information above. If something is missing, say you are not sure and gently redirect back to the site.",
+            "\n\nAnswer ONLY using the website information above. If something is missing, say you are not sure and gently redirect back to the site.\n\n" +
+            "If the user asks to go to a page or asks for a link, include one using [link text](/elder/path). Paths: Request Service = /elder/request-service, My Schedule = /elder/schedule, Notifications = /elder/notifications. Only include links when the user asks for directions or explicitly wants to take an action. Do NOT add links to every reply.",
         },
       ],
     });
 
-    const reply =
+    let reply =
       completion.choices?.[0]?.message?.content?.trim() || redirectReply;
+
+    // Post-process: convert bold page names and plain page mentions into links.
+    // The model often uses **Page Name** to highlight pages; we turn those into [Page Name](/path).
+    // Only touch text that isn't already inside a markdown link.
+    const pageMap = [
+      { pattern: /\*\*(?:Elder\s+)?Request\s+Service\*\*/gi, link: "[Request Service](/elder/request-service)" },
+      { pattern: /\*\*(?:My\s+)?Schedule\*\*/gi, link: "[My Schedule](/elder/schedule)" },
+      { pattern: /\*\*Notifications?\*\*/gi, link: "[Notifications](/elder/notifications)" },
+      { pattern: /\*\*Pending\s+Requests?\*\*/gi, link: "[Pending Requests](/elder)" },
+    ];
+    for (const { pattern, link } of pageMap) {
+      reply = reply.replace(pattern, link);
+    }
+    // Also catch plain-text references like "the Request Service page"
+    const plainMap = [
+      { pattern: /(?:the\s+)?(?:Elder\s+)?Request\s+Service\s+page/gi, link: "[Request Service](/elder/request-service)" },
+      { pattern: /(?:the\s+)?(?:My\s+)?Schedule\s+page/gi, link: "[My Schedule](/elder/schedule)" },
+      { pattern: /(?:the\s+)?Notifications?\s+(?:page|area)/gi, link: "[Notifications](/elder/notifications)" },
+    ];
+    for (const { pattern, link } of plainMap) {
+      if (!/\[.*\]\(\/elder\//.test(reply.match(pattern)?.[0] || "")) {
+        reply = reply.replace(pattern, link);
+      }
+    }
 
     res.json({ reply });
   } catch (err) {

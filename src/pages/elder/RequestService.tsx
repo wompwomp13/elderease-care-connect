@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import { getCurrentUser, logout } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
@@ -13,9 +13,9 @@ import { ChevronLeft, HeartHandshake, Home, ShoppingBasket, Users, Calendar as C
 import { toast } from "@/hooks/use-toast";
 import { format } from "date-fns";
 import TimeRangePicker from "@/components/ui/time-range-picker";
-import ElderChatbot from "@/components/elder/ElderChatbot";
 import { VolunteerAvatar } from "@/components/VolunteerAvatar";
 import { format12h, isEndAfterStart } from "@/lib/time";
+import { cn } from "@/lib/utils";
 import { db } from "@/lib/firebase";
 import { addDoc, collection, getDocs, onSnapshot, query, serverTimestamp, where } from "firebase/firestore";
 
@@ -106,9 +106,6 @@ const RequestService = () => {
   const [showSubmittedDialog, setShowSubmittedDialog] = useState(false);
   const [servicesError, setServicesError] = useState<string | null>(null);
   const [timeError, setTimeError] = useState<string | null>(null);
-  const formStartRef = useRef<number | null>(null);
-  const markFormStarted = () => { if (!formStartRef.current) formStartRef.current = Date.now(); };
-
   // Preferred volunteer selection and availability
   const [volunteers, setVolunteers] = useState<any[] | null>(null);
   const [ratingsMap, setRatingsMap] = useState<Record<string, { avg: number; count: number }>>({});
@@ -117,6 +114,16 @@ const RequestService = () => {
   const [preferredVolunteerName, setPreferredVolunteerName] = useState<string | null>(null);
   const [busyByEmail, setBusyByEmail] = useState<Record<string, Array<[number, number]>>>({}); // for selected date only
   const [busyLoading, setBusyLoading] = useState<boolean>(false);
+
+  // Track which client fields were auto-filled (red outline = no need to edit)
+  const [autoFilledFields, setAutoFilledFields] = useState<Set<string>>(new Set());
+  const clearAutoFilled = (field: string) => {
+    setAutoFilledFields((prev) => {
+      const next = new Set(prev);
+      next.delete(field);
+      return next;
+    });
+  };
 
   // Pre-fill client info from most recent request when user has history (scoped to this account only)
   useEffect(() => {
@@ -136,12 +143,14 @@ const RequestService = () => {
         const latest = docs[0];
         // Ensure we only use data from this logged-in account (userId = auth UID)
         if (latest?.userId !== uid) return;
-        if (latest?.elderFamilyName != null) setFamilyName(String(latest.elderFamilyName).trim());
-        if (latest?.elderFirstName != null) setFirstName(String(latest.elderFirstName).trim());
-        if (latest?.elderMiddleName != null) setMiddleName(String(latest.elderMiddleName).trim());
-        if (latest?.elderAge != null) setClientAge(String(latest.elderAge).trim());
-        if (latest?.elderGender != null) setGender(String(latest.elderGender).trim());
-        if (latest?.address != null) setClientAddress(String(latest.address).trim());
+        const fieldsToMark: string[] = [];
+        if (latest?.elderFamilyName != null) { setFamilyName(String(latest.elderFamilyName).trim()); fieldsToMark.push("familyName"); }
+        if (latest?.elderFirstName != null) { setFirstName(String(latest.elderFirstName).trim()); fieldsToMark.push("firstName"); }
+        if (latest?.elderMiddleName != null) { setMiddleName(String(latest.elderMiddleName).trim()); fieldsToMark.push("middleName"); }
+        if (latest?.elderAge != null) { setClientAge(String(latest.elderAge).trim()); fieldsToMark.push("clientAge"); }
+        if (latest?.elderGender != null) { setGender(String(latest.elderGender).trim()); fieldsToMark.push("gender"); }
+        if (latest?.address != null) { setClientAddress(String(latest.address).trim()); fieldsToMark.push("clientAddress"); }
+        setAutoFilledFields((prev) => new Set([...prev, ...fieldsToMark]));
       } catch {}
     })();
   }, [user?.id]);
@@ -412,20 +421,6 @@ const RequestService = () => {
 
     addDoc(collection(db, "serviceRequests"), payload)
       .then(() => {
-        // fire-and-forget: record form completion duration for analytics
-        try {
-          const startedAtMs = formStartRef.current ?? Date.now();
-          const durationMs = Math.max(0, Date.now() - startedAtMs);
-          addDoc(collection(db, "formMetrics"), {
-            type: "elder_request_service",
-            userRole: "elder",
-            userId: currentUser?.id ?? null,
-            durationMs,
-            startedAtMs,
-            submittedAt: serverTimestamp(),
-          });
-        } catch {}
-        // Open center confirmation dialog; elder will click OK to continue
         setShowSubmittedDialog(true);
       })
       .catch((err) => {
@@ -461,8 +456,8 @@ const RequestService = () => {
                       id="familyName"
                       placeholder="e.g., Dela Cruz"
                       value={familyName}
-                      onChange={(e) => setFamilyName(e.target.value)}
-                      className="mt-1.5"
+                      onChange={(e) => { setFamilyName(e.target.value); clearAutoFilled("familyName"); }}
+                      className={cn("mt-1.5", autoFilledFields.has("familyName") && "border-rose-300 ring-2 ring-rose-400/20")}
                     />
                   </div>
                   <div>
@@ -471,8 +466,8 @@ const RequestService = () => {
                       id="firstName"
                       placeholder="e.g., Juan"
                       value={firstName}
-                      onChange={(e) => setFirstName(e.target.value)}
-                      className="mt-1.5"
+                      onChange={(e) => { setFirstName(e.target.value); clearAutoFilled("firstName"); }}
+                      className={cn("mt-1.5", autoFilledFields.has("firstName") && "border-rose-300 ring-2 ring-rose-400/20")}
                     />
                   </div>
                 </div>
@@ -483,14 +478,14 @@ const RequestService = () => {
                       id="middleName"
                       placeholder="Optional"
                       value={middleName}
-                      onChange={(e) => setMiddleName(e.target.value)}
-                      className="mt-1.5"
+                      onChange={(e) => { setMiddleName(e.target.value); clearAutoFilled("middleName"); }}
+                      className={cn("mt-1.5", autoFilledFields.has("middleName") && "border-rose-300 ring-2 ring-rose-400/20")}
                     />
                   </div>
                   <div>
                     <Label>Gender *</Label>
-                    <Select value={gender} onValueChange={(v) => setGender(v)}>
-                      <SelectTrigger className="mt-1.5">
+                    <Select value={gender} onValueChange={(v) => { setGender(v); clearAutoFilled("gender"); }}>
+                      <SelectTrigger className={cn("mt-1.5", autoFilledFields.has("gender") && "border-rose-300 ring-2 ring-rose-400/20")}>
                         <SelectValue placeholder="Select gender" />
                       </SelectTrigger>
                       <SelectContent>
@@ -509,8 +504,8 @@ const RequestService = () => {
                     type="number"
                     placeholder="Enter age"
                     value={clientAge}
-                    onChange={(e) => setClientAge(e.target.value)}
-                    className="mt-1.5"
+                    onChange={(e) => { setClientAge(e.target.value); clearAutoFilled("clientAge"); }}
+                    className={cn("mt-1.5", autoFilledFields.has("clientAge") && "border-rose-300 ring-2 ring-rose-400/20")}
                   />
                 </div>
                 <div>
@@ -519,9 +514,9 @@ const RequestService = () => {
                     id="clientAddress"
                     placeholder="Enter complete street address and city"
                     value={clientAddress}
-                    onChange={(e) => setClientAddress(e.target.value)}
+                    onChange={(e) => { setClientAddress(e.target.value); clearAutoFilled("clientAddress"); }}
                     rows={3}
-                    className="mt-1.5"
+                    className={cn("mt-1.5", autoFilledFields.has("clientAddress") && "border-rose-300 ring-2 ring-rose-400/20")}
                   />
                 </div>
               </CardContent>
@@ -612,7 +607,7 @@ const RequestService = () => {
 
           {/* Right Column - Date & Time Selection */}
           <div className="space-y-6">
-            <Card onFocusCapture={markFormStarted}>
+            <Card>
               <CardHeader>
                 <CardTitle>2) Select Date</CardTitle>
                 <CardDescription>Choose your preferred date</CardDescription>
@@ -628,7 +623,7 @@ const RequestService = () => {
               </CardContent>
             </Card>
 
-            <Card onFocusCapture={markFormStarted}>
+            <Card>
               <CardHeader>
                 <CardTitle>3) Choose Start Time</CardTitle>
                 <CardDescription>
@@ -653,7 +648,7 @@ const RequestService = () => {
             </Card>
 
             {/* Preferred Volunteer */}
-            <Card onFocusCapture={markFormStarted}>
+            <Card>
               <CardHeader>
                 <CardTitle>4) Preferred Volunteer (optional)</CardTitle>
                 <CardDescription>Select someone you prefer. Availability shows after choosing date & time.</CardDescription>
@@ -803,7 +798,6 @@ const RequestService = () => {
           </div>
         </div>
       </div>
-      <ElderChatbot />
       {showSubmittedDialog && (
         <div role="dialog" aria-modal="true" className="fixed inset-0 z-[100] flex items-center justify-center">
           <div className="absolute inset-0 bg-background/60 backdrop-blur-sm" />

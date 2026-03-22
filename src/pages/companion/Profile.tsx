@@ -10,7 +10,7 @@ import { ref, uploadBytes, getDownloadURL, deleteObject } from "firebase/storage
 import { collection, onSnapshot, query, where } from "firebase/firestore";
 import { db, storage } from "@/lib/firebase";
 import { useToast } from "@/hooks/use-toast";
-import { Camera, Loader2, Trash2, User } from "lucide-react";
+import { AlertCircle, Camera, Loader2, Trash2, User } from "lucide-react";
 
 const CompanionNavbar = () => {
   const user = getCurrentUser();
@@ -51,7 +51,7 @@ const Profile = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [auth, setAuth] = useState<AuthProfile | null>(null);
   const [idDoc, setIdDoc] = useState<{ idFileUrl: string | null; idFileName?: string | null } | null>(null);
-  const [volunteerDoc, setVolunteerDoc] = useState<{ id: string; profilePhotoUrl?: string | null; profilePhotoStoragePath?: string | null } | null>(null);
+  const [volunteerDoc, setVolunteerDoc] = useState<{ id: string; profilePhotoUrl?: string | null; profilePhotoStoragePath?: string | null; previousTerminationReason?: string | null } | null>(null);
   const [photoUploading, setPhotoUploading] = useState(false);
 
   useEffect(() => {
@@ -74,12 +74,13 @@ const Profile = () => {
         setVolunteerDoc(null);
         return;
       }
-      const d = docSnap.data() as { idFileUrl?: string | null; idFileName?: string | null; profilePhotoUrl?: string | null; profilePhotoStoragePath?: string | null };
+      const d = docSnap.data() as { idFileUrl?: string | null; idFileName?: string | null; profilePhotoUrl?: string | null; profilePhotoStoragePath?: string | null; previousTerminationReason?: string | null };
       setIdDoc({ idFileUrl: d.idFileUrl ?? null, idFileName: d.idFileName });
       setVolunteerDoc({
         id: docSnap.id,
         profilePhotoUrl: d.profilePhotoUrl ?? null,
         profilePhotoStoragePath: d.profilePhotoStoragePath ?? null,
+        previousTerminationReason: d.previousTerminationReason ?? null,
       });
     });
     return () => unsub();
@@ -168,6 +169,23 @@ const Profile = () => {
               <CardTitle>Account Details</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4 text-sm">
+              {auth?.role === "companion" && volunteerDoc?.previousTerminationReason && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 dark:border-amber-900/50 dark:bg-amber-950/30 p-4">
+                  <div className="flex gap-3">
+                    <AlertCircle className="h-5 w-5 shrink-0 text-amber-600 dark:text-amber-500 mt-0.5" />
+                    <div>
+                      <p className="font-medium text-amber-900 dark:text-amber-100">Previous termination notice</p>
+                      <p className="mt-1 text-amber-800 dark:text-amber-200/90">
+                        Your account was previously terminated for the following reason:
+                      </p>
+                      <p className="mt-2 italic">&ldquo;{volunteerDoc.previousTerminationReason}&rdquo;</p>
+                      <p className="mt-2 text-sm text-amber-700 dark:text-amber-300/80">
+                        Your account has been reactivated. Please keep this feedback in mind as you continue volunteering.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
               {auth?.role === "companion" && volunteerDoc && (
                 <div className="flex items-center gap-4 pb-4 border-b border-muted/50">
                   <div className="relative shrink-0">

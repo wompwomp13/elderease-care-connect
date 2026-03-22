@@ -5,7 +5,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Heart, Mail, Phone, MapPin, Clock, Users, Home, ShoppingBasket, HeartHandshake, Check } from "lucide-react";
 import { motion } from "framer-motion";
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { db, storage } from "@/lib/firebase";
 import { addDoc, collection, serverTimestamp } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
@@ -29,8 +29,6 @@ const normalizePHPhone = (input: string): string | null => {
 };
 
 const VolunteerSection = () => {
-  const formStartRef = useRef<number | null>(null);
-  const markFormStarted = () => { if (!formStartRef.current) formStartRef.current = Date.now(); };
   const [firstName, setFirstName] = useState("");
   const [middleName, setMiddleName] = useState("");
   const [lastName, setLastName] = useState("");
@@ -96,19 +94,6 @@ const VolunteerSection = () => {
         status: "pending",
         createdAt: serverTimestamp(),
       });
-      // fire-and-forget: record form completion time
-      try {
-        const startedAtMs = formStartRef.current ?? Date.now();
-        const durationMs = Math.max(0, Date.now() - startedAtMs);
-        await addDoc(collection(db, "formMetrics"), {
-          type: "volunteer_application",
-          userRole: "volunteer",
-          email: email.trim().toLowerCase(),
-          durationMs,
-          startedAtMs,
-          submittedAt: serverTimestamp(),
-        });
-      } catch {}
       toast({ title: "Application submitted!", description: "Our admin team will review your details and contact you soon." });
       setFirstName(""); setMiddleName(""); setLastName(""); setEmail(""); setPhone(""); setAddress(""); setMessage(""); setSelectedServices([]); setIdFile(null); setGender("");
     } catch (err: any) {
@@ -207,7 +192,7 @@ const VolunteerSection = () => {
           >
             <Card className="shadow-2xl h-full">
             <CardContent className="p-8">
-              <form onSubmit={handleSubmit} className="space-y-5" onFocusCapture={markFormStarted}>
+              <form onSubmit={handleSubmit} className="space-y-5">
                 <div className="grid sm:grid-cols-2 gap-3">
                   <div>
                     <Label htmlFor="firstName" className="text-sm font-semibold text-foreground">

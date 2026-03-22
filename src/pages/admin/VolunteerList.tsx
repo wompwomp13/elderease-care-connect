@@ -244,13 +244,24 @@ const VolunteerList = () => {
 
   const reactivateVolunteer = async (v: Volunteer) => {
     try {
-      await updateDoc(doc(db, "pendingVolunteers", v.id), { status: "approved", terminationReason: null, decidedAt: serverTimestamp() });
-      // Also set matching users.status = 'approved' and clear terminationReason by email
+      const prevReason = (v as any).terminationReason?.trim() || null;
+      await updateDoc(doc(db, "pendingVolunteers", v.id), {
+        status: "approved",
+        terminationReason: null,
+        previousTerminationReason: prevReason,
+        decidedAt: serverTimestamp(),
+      });
+      // Also set matching users.status = 'approved', clear terminationReason, preserve previous
       if (v.email) {
         const uq = query(collection(db, "users"), where("email", "==", v.email.toLowerCase()));
         const usnap = await getDocs(uq);
         for (const udoc of usnap.docs) {
-          await updateDoc(doc(db, "users", udoc.id), { status: "approved", terminationReason: null, updatedAt: serverTimestamp() });
+          await updateDoc(doc(db, "users", udoc.id), {
+            status: "approved",
+            terminationReason: null,
+            previousTerminationReason: prevReason,
+            updatedAt: serverTimestamp(),
+          });
         }
       }
       toast({ title: "Volunteer reactivated." });
