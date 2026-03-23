@@ -5,13 +5,14 @@ import { Input } from "@/components/ui/input";
 import logo from "@/assets/logo.png";
 import companionshipImage from "@/assets/elder-companionship.jpg";
 import { useMemo, useRef, useState, useEffect } from "react";
-import { HeartHandshake, ShoppingBasket, Home, Users, Calendar, Bell, MessageSquare, Sparkles } from "lucide-react";
+import { HeartHandshake, ShoppingBasket, Home, Users, Calendar, Bell, MessageSquare, Sparkles, Download } from "lucide-react";
 import { db } from "@/lib/firebase";
-import { collection, doc, onSnapshot, query, serverTimestamp, updateDoc, where } from "firebase/firestore";
+import { collection, doc, getDocs, onSnapshot, query, serverTimestamp, updateDoc, where } from "firebase/firestore";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { generateElderReport } from "@/lib/report-utils";
 
 const ElderNavbar = () => {
   const user = getCurrentUser();
@@ -225,7 +226,7 @@ const ElderHome = () => {
       let best: any | null = null;
       snap.docs.forEach((d) => {
         const a = { id: d.id, ...(d.data() as any) };
-        if (a.status === "cancelled") return;
+        if (a.status === "cancelled" || a.status === "declined") return;
         const dayMs = typeof a.serviceDateTS === "number" ? a.serviceDateTS : (a.serviceDateTS?.toMillis?.() ?? 0);
         const mins = toMinutes(a.startTime24);
         if (dayMs && mins != null) {
@@ -320,16 +321,71 @@ const ElderHome = () => {
                  You’re managing care for your loved one. Schedule visits, request services, and keep track of updates in one place.
                </p>
               <div className="flex flex-wrap gap-3">
-                <Button size="lg" className="gap-2">
-                  <Calendar className="h-5 w-5" />
-                  View Schedule
-                </Button>
+                <Link to="/elder/schedule">
+                  <Button size="lg" className="gap-2">
+                    <Calendar className="h-5 w-5" />
+                    View Schedule
+                  </Button>
+                </Link>
                 <Link to="/elder/request-service">
                   <Button size="lg" variant="outline" className="gap-2">
                     <HeartHandshake className="h-5 w-5" />
                     Request Service
                   </Button>
                 </Link>
+                <Button size="lg" variant="outline" className="gap-2" onClick={async () => {
+                  const uid = user?.id;
+                  if (!uid) return;
+                  const [reqSnap, assignSnap] = await Promise.all([
+                    getDocs(query(collection(db, "serviceRequests"), where("userId", "==", uid))),
+                    getDocs(query(collection(db, "assignments"), where("elderUserId", "==", uid))),
+                  ]);
+                  const allRequests = reqSnap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
+                  const allAssignments = assignSnap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
+                  const pendingReqs = allRequests.filter((r) => (r.status || "pending") === "pending");
+                  const getTs = (a: any) => typeof a.serviceDateTS === "number" ? a.serviceDateTS : (a.serviceDateTS?.toMillis?.() ?? 0);
+                  const upcomingAssign = allAssignments
+                    .filter((a) => a.status !== "completed" && a.status !== "cancelled" && a.status !== "declined")
+                    .sort((a, b) => getTs(a) - getTs(b));
+                  const completedAssign = allAssignments
+                    .filter((a) => a.status === "completed" || a.guardianConfirmed)
+                    .sort((a, b) => getTs(b) - getTs(a));
+                  generateElderReport({
+                    guardianName: greetingName,
+                    pendingRequestsCount: pendingReqs.length,
+                    upcomingCount: upcomingAssign.length,
+                    completedCount: completedAssign.length,
+                    pendingRequests: pendingReqs.map((r) => ({
+                      services: r.services,
+                      serviceDateDisplay: r.serviceDateDisplay,
+                      serviceDateTS: r.serviceDateTS,
+                      startTimeText: r.startTimeText,
+                      endTimeText: r.endTimeText,
+                      status: r.status,
+                      createdAt: r.createdAt,
+                    })),
+                    upcomingAssignments: upcomingAssign.map((a) => ({
+                      serviceDateTS: a.serviceDateTS,
+                      services: a.services,
+                      volunteerName: a.volunteerName,
+                      volunteerEmail: a.volunteerEmail,
+                      startTimeText: a.startTimeText,
+                      endTimeText: a.endTimeText,
+                      address: a.address,
+                    })),
+                    completedAssignments: completedAssign.map((a) => ({
+                      serviceDateTS: a.serviceDateTS,
+                      services: a.services,
+                      volunteerName: a.volunteerName,
+                      volunteerEmail: a.volunteerEmail,
+                      startTimeText: a.startTimeText,
+                      endTimeText: a.endTimeText,
+                    })),
+                  });
+                }}>
+                  <Download className="h-5 w-5" />
+                  Download report
+                </Button>
               </div>
             </div>
             <div className="relative">

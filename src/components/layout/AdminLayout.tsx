@@ -1,7 +1,7 @@
 import { Link, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { logout } from "@/lib/auth";
-import { LayoutDashboard, Users, ClipboardList, MessageSquare, FileEdit, LogOut } from "lucide-react";
+import { LayoutDashboard, Users, ClipboardList, FileEdit, LogOut } from "lucide-react";
 import logo from "@/assets/logo.png";
 
 const AdminLayout = ({ children }: { children: React.ReactNode }) => {

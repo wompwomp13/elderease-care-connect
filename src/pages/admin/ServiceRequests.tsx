@@ -148,7 +148,7 @@ const ServiceRequests = () => {
           const sMin = sh * 60 + (sm || 0);
           const eMin = eh * 60 + (em || 0);
           if (!email || !isFinite(sMin) || !isFinite(eMin)) return;
-          if (a.status === "cancelled") return;
+          if (a.status === "cancelled" || a.status === "declined") return;
           if (!perEmail[email]) perEmail[email] = [];
           if (eMin <= sMin) {
             // Interval crosses midnight; split and spill
@@ -316,8 +316,23 @@ const ServiceRequests = () => {
     return !intervals.some(([bs, be]) => hasOverlap(s, e, bs, be));
   };
 
+  const hasVolunteerDeclinedRequest = (vol: any, req: any): boolean => {
+    if (!vol || !req) return false;
+    const emailKey = (vol.email || "").toLowerCase();
+    const declinedBy = (req.preferredVolunteerDeclinedBy || []) as string[];
+    if (declinedBy.some((e: string) => (e || "").toLowerCase() === emailKey)) return true;
+    const assignment = assignmentByRequest[req.id];
+    if (assignment?.status === "declined" && (assignment.volunteerEmail || "").toLowerCase() === emailKey) return true;
+    return false;
+  };
+
   const handleAssign = async (requestId: string, volunteer: any) => {
     try {
+      const reqForCheck = (requests || []).find((r) => r.id === requestId);
+      if (reqForCheck && hasVolunteerDeclinedRequest(volunteer, reqForCheck)) {
+        toast({ title: "Cannot assign", description: "This volunteer has declined this request.", variant: "destructive" });
+        return;
+      }
       const reqRef = doc(db, "serviceRequests", requestId);
       const freshSnap = await getDoc(reqRef);
       if (!freshSnap.exists()) {
@@ -351,7 +366,7 @@ const ServiceRequests = () => {
           const [eh, em] = String(a.endTime24 || "").split(":").map((x: string) => parseInt(x || "0", 10));
           const bs = sh * 60 + (sm || 0);
           const be = eh * 60 + (em || 0);
-          if (a.status !== "cancelled" && s != null && e != null && hasOverlap(s, e, bs, be)) {
+          if (a.status !== "cancelled" && a.status !== "declined" && s != null && e != null && hasOverlap(s, e, bs, be)) {
             conflict = true;
           }
         });
@@ -449,17 +464,6 @@ const ServiceRequests = () => {
     }
   };
 
-  const getServiceColor = (service: string) => {
-    const colors: Record<string, string> = {
-      "Companionship": "border-l-purple-500",
-      "Running Errands": "border-l-blue-500",
-      "Light Housekeeping": "border-l-green-500",
-      "Home Visits": "border-l-orange-500",
-      "Socialization": "border-l-pink-500",
-    };
-    return colors[service] || "border-l-primary";
-  };
-
   return (
     <AdminLayout>
       <div className="space-y-6">
@@ -485,15 +489,19 @@ const ServiceRequests = () => {
             const pageItems = requests.slice(start, start + perPage);
             return (
               <>
-                {pageItems.map((request) => (
-            <Card key={request.id} className={`border-l-4 ${getServiceColor((request.services?.[0]) || request.service || "")}`}>
+                {pageItems.map((request) => {
+                  const assignment = assignmentByRequest[request.id];
+                  const isFullyCompleted = assignment?.status === "completed" && assignment?.guardianConfirmed === true;
+                  const effectiveStatus = isFullyCompleted ? "completed" : request.status;
+                  return (
+            <Card key={request.id} className="border bg-card">
               <CardHeader>
                 <div className="flex items-start justify-between">
                   <div>
                     <CardTitle className="text-xl">{request.elderName}</CardTitle>
                     <p className="text-lg font-semibold text-primary mt-1">{Array.isArray(request.services) ? request.services.join(", ") : request.service}</p>
                   </div>
-                  {getStatusBadge(request.status)}
+                  {getStatusBadge(effectiveStatus)}
                 </div>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -526,6 +534,31 @@ const ServiceRequests = () => {
                       <div className="flex items-center gap-2">
                         <User className="h-4 w-4 text-muted-foreground" />
                         <span className="text-sm">Preferred by guardian: <span className="font-medium">{request.preferredVolunteerName}</span></span>
+                      </div>
+                    )}
+                    {request.status === "pending" && (assignmentByRequest[request.id]?.status === "declined" || (request.preferredVolunteerDeclinedBy?.length ?? 0) > 0 || request.preferredVolunteerDeclineReason) && (
+                      <div className="rounded-md border border-red-200 dark:border-red-800/50 bg-card p-2.5">
+                        {assignmentByRequest[request.id]?.status === "declined" ? (
+                          <>
+                            <p className="text-sm font-medium">Volunteer declined (admin-assigned)</p>
+                            <p className="text-xs text-muted-foreground mt-0.5">
+                              {assignmentByRequest[request.id].volunteerName || "Volunteer"} declined.
+                            </p>
+                            {assignmentByRequest[request.id].declineReason && (
+                              <p className="text-xs mt-1.5 italic">&ldquo;{assignmentByRequest[request.id].declineReason}&rdquo;</p>
+                            )}
+                          </>
+                        ) : (
+                          <>
+                            <p className="text-sm font-medium">Preferred volunteer declined</p>
+                            <p className="text-xs text-muted-foreground mt-0.5">
+                              {request.preferredVolunteerName || request.preferredVolunteerEmail || "The preferred volunteer"} declined.
+                            </p>
+                            {request.preferredVolunteerDeclineReason && (
+                              <p className="text-xs mt-1.5 italic">&ldquo;{request.preferredVolunteerDeclineReason}&rdquo;</p>
+                            )}
+                          </>
+                        )}
                       </div>
                     )}
                     <div>
@@ -665,8 +698,10 @@ const ServiceRequests = () => {
                                       const matches = reqServiceIds.filter((id: string) => volServiceIds.includes(id));
                                       const matchPct = reqServiceIds.length ? Math.round((matches.length / reqServiceIds.length) * 100) : 0;
                                       const preferred = ((v.email || "").toLowerCase() === (request?.preferredVolunteerEmail || "").toLowerCase());
+                                      const declined = hasVolunteerDeclinedRequest(v, request);
+                                      const canAssign = !declined && isVolunteerAvailableForRequest(v, request);
                                       return (
-                                        <div key={v.id} className="rounded-2xl border bg-card/70 backdrop-blur shadow-sm hover:shadow-md transition-shadow overflow-hidden select-none">
+                                        <div key={v.id} className={`rounded-2xl border bg-card/70 backdrop-blur shadow-sm hover:shadow-md transition-shadow overflow-hidden select-none ${declined ? "border-2 border-red-200 dark:border-red-800/60" : ""}`}>
                                           <div className="p-5 cursor-grab active:cursor-grabbing">
                                             <div className="flex items-start justify-between mb-3">
                                               <div className="flex items-center gap-3">
@@ -707,8 +742,8 @@ const ServiceRequests = () => {
                                               </div>
                                               <span className="inline-block h-1 w-1 rounded-full bg-muted-foreground/50" />
                                               <span>{matchPct}% match • {matches.map((m) => m[0]?.toUpperCase() + m.slice(1)).join(", ") || "No match"}</span>
-                                              <span className={`ml-auto ${isVolunteerAvailableForRequest(v, request) ? "text-emerald-600" : "text-destructive"}`}>
-                                                {isVolunteerAvailableForRequest(v, request) ? "Available" : "Conflict"}
+                                              <span className={`ml-auto ${declined ? "text-destructive font-medium" : isVolunteerAvailableForRequest(v, request) ? "text-emerald-600" : "text-destructive"}`}>
+                                                {declined ? "Unavailable" : isVolunteerAvailableForRequest(v, request) ? "Available" : "Conflict"}
                                               </span>
                                             </div>
                                           </div>
@@ -746,8 +781,8 @@ const ServiceRequests = () => {
                                                       ))}
                                                     </div>
                                                   </div>
-                                                  <div className={`font-medium ${isVolunteerAvailableForRequest(v, request) ? "text-emerald-600" : "text-destructive"}`}>
-                                                    Availability: {isVolunteerAvailableForRequest(v, request) ? "Available" : "Conflict at selected time"}
+                                                  <div className={`font-medium ${declined ? "text-destructive" : isVolunteerAvailableForRequest(v, request) ? "text-emerald-600" : "text-destructive"}`}>
+                                                    Availability: {declined ? "Unavailable (declined)" : isVolunteerAvailableForRequest(v, request) ? "Available" : "Conflict at selected time"}
                                                   </div>
                                                   {v.bio && (
                                                     <div>
@@ -758,8 +793,8 @@ const ServiceRequests = () => {
                                                 </div>
                                               </DialogContent>
                                             </Dialog>
-                                            <Button onClick={() => handleAssign(request.id, v)} disabled={!isVolunteerAvailableForRequest(v, request)} aria-disabled={!isVolunteerAvailableForRequest(v, request)}>
-                                              {isVolunteerAvailableForRequest(v, request) ? "Assign" : "Unavailable"}
+                                            <Button onClick={() => handleAssign(request.id, v)} disabled={!canAssign} aria-disabled={!canAssign}>
+                                              {canAssign ? "Assign" : "Unavailable"}
                                             </Button>
                     </div>
                                         </div>
@@ -779,7 +814,8 @@ const ServiceRequests = () => {
                 )}
               </CardContent>
             </Card>
-          ))}
+                  );
+                })}
                 <Pagination className="mt-2">
                   <PaginationContent>
                     <PaginationItem>

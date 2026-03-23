@@ -150,6 +150,106 @@ export function generateVolunteerReport(data: VolunteerReportData): void {
   doc.save(filename);
 }
 
+export interface ElderReportData {
+  guardianName: string;
+  pendingRequestsCount: number;
+  upcomingCount: number;
+  completedCount: number;
+  pendingRequests: Array<{
+    services?: string[] | string;
+    serviceDateDisplay?: string;
+    serviceDateTS?: unknown;
+    startTimeText?: string;
+    endTimeText?: string;
+    status?: string;
+    createdAt?: unknown;
+  }>;
+  upcomingAssignments: Array<{
+    serviceDateTS?: unknown;
+    services?: string[] | string;
+    volunteerName?: string;
+    volunteerEmail?: string;
+    startTimeText?: string;
+    endTimeText?: string;
+    address?: string;
+  }>;
+  completedAssignments: Array<{
+    serviceDateTS?: unknown;
+    services?: string[] | string;
+    volunteerName?: string;
+    volunteerEmail?: string;
+    startTimeText?: string;
+    endTimeText?: string;
+  }>;
+}
+
+export function generateElderReport(data: ElderReportData): void {
+  const doc = new jsPDF();
+  let y = 20;
+
+  doc.setFontSize(18);
+  doc.setFont("helvetica", "bold");
+  doc.text("ElderEase Guardian Report", MARGIN, y);
+  y += LINE_HEIGHT + 2;
+
+  doc.setFontSize(10);
+  doc.setFont("helvetica", "normal");
+  doc.text(`Guardian: ${data.guardianName}`, MARGIN, y);
+  y += LINE_HEIGHT;
+  doc.text(`Generated: ${new Date().toLocaleString()}`, MARGIN, y);
+  y += SECTION_GAP;
+
+  y = addSectionTitle(doc, "Summary", y);
+  const summaryRows: [string, string | number][] = [
+    ["Pending requests", data.pendingRequestsCount],
+    ["Upcoming visits", data.upcomingCount],
+    ["Completed services", data.completedCount],
+  ];
+  y = addKeyValueTable(doc, summaryRows, y) + SECTION_GAP;
+
+  if (data.pendingRequests.length > 0) {
+    y = addSectionTitle(doc, "Pending Requests", y);
+    const headers = ["Services", "Date", "Time", "Status"];
+    const rows = data.pendingRequests.map((r) => [
+      Array.isArray(r.services) ? r.services.join(", ") : (r.services || ""),
+      r.serviceDateDisplay || formatTimestamp(r.serviceDateTS as number | { toMillis?: () => number }),
+      `${r.startTimeText || ""} - ${r.endTimeText || ""}`,
+      r.status || "pending",
+    ]);
+    y = addDataTable(doc, headers, rows, y) + SECTION_GAP;
+  }
+
+  if (data.upcomingAssignments.length > 0) {
+    if (y > 240) { doc.addPage(); y = 20; }
+    y = addSectionTitle(doc, "Upcoming Schedule", y);
+    const headers = ["Date", "Services", "Volunteer", "Time", "Address"];
+    const rows = data.upcomingAssignments.map((a) => [
+      formatTimestamp(a.serviceDateTS as number | { toMillis?: () => number }),
+      Array.isArray(a.services) ? a.services.join(", ") : (a.services || ""),
+      a.volunteerName || a.volunteerEmail || "—",
+      `${a.startTimeText || ""} - ${a.endTimeText || ""}`,
+      a.address || "—",
+    ]);
+    y = addDataTable(doc, headers, rows, y) + SECTION_GAP;
+  }
+
+  if (data.completedAssignments.length > 0) {
+    if (y > 240) { doc.addPage(); y = 20; }
+    y = addSectionTitle(doc, "Completed Service History", y);
+    const headers = ["Date", "Services", "Volunteer", "Time"];
+    const rows = data.completedAssignments.map((a) => [
+      formatTimestamp(a.serviceDateTS as number | { toMillis?: () => number }),
+      Array.isArray(a.services) ? a.services.join(", ") : (a.services || ""),
+      a.volunteerName || a.volunteerEmail || "—",
+      `${a.startTimeText || ""} - ${a.endTimeText || ""}`,
+    ]);
+    addDataTable(doc, headers, rows, y);
+  }
+
+  const filename = `ElderEase-Guardian-Report-${new Date().toISOString().slice(0, 10)}.pdf`;
+  doc.save(filename);
+}
+
 export interface AdminReportData {
   totalRequests: number;
   pendingRequests: number;

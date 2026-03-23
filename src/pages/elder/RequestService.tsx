@@ -271,7 +271,7 @@ const RequestService = () => {
         const startMin = sh * 60 + (sm || 0);
         const endMin = eh * 60 + (em || 0);
         if (!email || !isFinite(startMin) || !isFinite(endMin)) return;
-        if (a.status === "cancelled") return;
+        if (a.status === "cancelled" || a.status === "declined") return;
         if (!map[email]) map[email] = [];
         // Handle cross-midnight assignments by splitting into two intervals
         if (endMin <= startMin) {

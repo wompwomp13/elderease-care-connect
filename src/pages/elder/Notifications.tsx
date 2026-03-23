@@ -2,7 +2,7 @@ import { Link, useLocation } from "react-router-dom";
 import { getCurrentUser, logout, subscribeToAuth, type AuthProfile } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import logo from "@/assets/logo.png";
-import { Bell, Calendar, HeartHandshake, ShoppingBasket, Home, Users, MessageSquare } from "lucide-react";
+import { Bell, HeartHandshake, XCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 import { db } from "@/lib/firebase";
 import { collection, onSnapshot, orderBy, query, where } from "firebase/firestore";
@@ -39,18 +39,23 @@ const ElderNavbar = () => {
   );
 };
 
-type NotificationItem = { id: string; icon: any; title: string; text: string; badge: string; tone: string; receipt?: any };
+type NotificationItem = { id: string; icon: any; title: string; text: string; badge: string; tone: string; receipt?: any; declineReason?: string; sortKey?: number };
 
 const toneClasses: Record<string, string> = {
-  info: "border-[#6F8F66]/30 bg-[#6F8F66]/5",
-  suggest: "border-[#91B187]/30 bg-[#91B187]/5",
-  highlight: "border-[#B7CDB0]/40 bg-[#B7CDB0]/10",
+  info: "border bg-card",
+  suggest: "border bg-card",
+  highlight: "border bg-card",
+  decline: "border bg-card",
 };
 
 const Notifications = () => {
   const user = getCurrentUser();
   const [uid, setUid] = useState<string | null>(user?.id ?? null);
-  const [items, setItems] = useState<NotificationItem[] | null>(null);
+  const [assignmentItems, setAssignmentItems] = useState<NotificationItem[]>([]);
+  const [notifItems, setNotifItems] = useState<NotificationItem[]>([]);
+  const items: NotificationItem[] | null = uid
+    ? [...assignmentItems, ...notifItems].sort((a, b) => (b.sortKey ?? 0) - (a.sortKey ?? 0))
+    : null;
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const toggleExpand = (id: string) => setExpanded((prev) => ({ ...prev, [id]: !prev[id] }));
   const formatPHP = (value: number) => new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP", currencyDisplay: "narrowSymbol", minimumFractionDigits: 2 }).format(value);
@@ -61,24 +66,49 @@ const Notifications = () => {
   }, []);
 
   useEffect(() => {
-    if (!uid) { setItems([]); return; }
-    const q = query(collection(db, "assignments"), where("elderUserId", "==", uid), where("status", "==", "assigned"), orderBy("createdAt", "desc"));
-    const unsub = onSnapshot(q, (snap) => {
-      const arr: NotificationItem[] = snap.docs.map((d) => {
+    if (!uid) { setAssignmentItems([]); setNotifItems([]); return; }
+    const assignmentsQ = query(collection(db, "assignments"), where("elderUserId", "==", uid), where("status", "==", "assigned"), orderBy("createdAt", "desc"));
+    const notifQ = query(collection(db, "notifications"), where("recipientUid", "==", uid));
+
+    const unsubAssignments = onSnapshot(assignmentsQ, (snap) => {
+      setAssignmentItems(snap.docs.map((d) => {
         const a = d.data() as any;
+        const createdMs = a.createdAt?.toMillis?.() ?? (typeof a.createdAt === "number" ? a.createdAt : 0);
         return {
-          id: d.id,
+          id: `a-${d.id}`,
           icon: HeartHandshake,
           title: `Service confirmed: ${Array.isArray(a.services) ? a.services.join(", ") : a.services}`,
           text: `${a.startTimeText} - ${a.endTimeText} on ${a.serviceDateTS ? new Date(a.serviceDateTS).toLocaleDateString() : ""}`,
           badge: "Confirmed",
           tone: "info",
           receipt: a.receipt || null,
+          sortKey: createdMs,
+        };
+      }));
+    });
+
+    const unsubNotifications = onSnapshot(notifQ, (snap) => {
+      const mapped = snap.docs.map((d) => {
+        const n = d.data() as any;
+        const createdMs = n.createdAt?.toMillis?.() ?? (typeof n.createdAt === "number" ? n.createdAt : 0);
+        return {
+          id: `n-${d.id}`,
+          icon: XCircle,
+          title: n.title || "Volunteer declined your request",
+          text: n.body || "",
+          badge: "Declined",
+          tone: "decline",
+          declineReason: n.declineReason || null,
+          sortKey: createdMs,
         };
       });
-      setItems(arr);
+      setNotifItems(mapped.sort((a, b) => (b.sortKey ?? 0) - (a.sortKey ?? 0)));
     });
-    return () => unsub();
+
+    return () => {
+      unsubAssignments();
+      unsubNotifications();
+    };
   }, [uid]);
   const name = user?.name?.split(" ")[0] ?? "there";
   return (
@@ -109,6 +139,12 @@ const Notifications = () => {
                     <span className="text-[10px] px-2 py-0.5 rounded-full bg-primary/10 text-primary">{n.badge}</span>
                   </div>
                   <p className="text-sm text-muted-foreground">{n.text}</p>
+                  {n.declineReason && (
+                    <div className="mt-2 rounded-md border border-red-200 dark:border-red-800/50 bg-card p-2 text-sm">
+                      <p className="text-xs text-muted-foreground font-medium">Reason given:</p>
+                      <p className="mt-0.5">{n.declineReason}</p>
+                    </div>
+                  )}
                   {n.receipt && (
                     <div className="mt-3">
                       <button className="text-xs text-primary hover:underline" onClick={() => toggleExpand(n.id)}>

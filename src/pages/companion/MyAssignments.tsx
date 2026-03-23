@@ -4,9 +4,9 @@ import { getCurrentUser, logout, subscribeToAuth, type AuthProfile } from "@/lib
 import logo from "@/assets/logo.png";
 import { Calendar as DateCalendar } from "@/components/ui/calendar";
 import { useEffect, useMemo, useState } from "react";
-import { Calendar, MapPin, Phone, User, Clock, HeartHandshake, ShoppingBasket, CheckCircle2 } from "lucide-react";
+import { Calendar, MapPin, HeartHandshake, CheckCircle2 } from "lucide-react";
 import { db } from "@/lib/firebase";
-import { collection, onSnapshot, orderBy, query, where, updateDoc, doc, addDoc, serverTimestamp, getDoc } from "firebase/firestore";
+import { collection, onSnapshot, query, where, updateDoc, doc, addDoc, serverTimestamp, getDoc } from "firebase/firestore";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Button as UIButton } from "@/components/ui/button";
 import { useToast } from "@/components/ui/use-toast";
@@ -155,9 +155,9 @@ const MyAssignments = () => {
     return h > 0 ? `${h}h${m ? ` ${m}m` : ""}` : `${m}m`;
   };
 
-  // Filter by selected day (only when a day is chosen)
+  // Only show assignments the volunteer has accepted; filter by day when enabled
   const filteredAssignments = useMemo(() => {
-    const list = assignments || [];
+    const list = (assignments || []).filter((a) => a.acceptedByVolunteer && a.status !== "declined" && a.status !== "cancelled");
     if (!dayFilterEnabled || !selectedDate) return list;
     const start = new Date(selectedDate);
     start.setHours(0, 0, 0, 0);

@@ -14,8 +14,12 @@ import {
   runTransaction,
   serverTimestamp,
   where,
+  updateDoc,
+  addDoc,
+  deleteField,
+  arrayUnion,
 } from "firebase/firestore";
-import { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useToast } from "@/hooks/use-toast";
 import {
   Calendar,
@@ -26,8 +30,10 @@ import {
   Loader2,
   ClipboardList,
   ArrowLeft,
+  XCircle,
 } from "lucide-react";
 import logo from "@/assets/logo.png";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   getDynamicAdjustment,
   genConfirmation,
@@ -75,6 +81,10 @@ const FindRequests = () => {
   const [tasksMap, setTasksMap] = useState<Record<string, number>>({});
   const [myAssignments, setMyAssignments] = useState<any[]>([]);
   const [acceptingId, setAcceptingId] = useState<string | null>(null);
+  const [decliningId, setDecliningId] = useState<string | null>(null);
+  const [declineReason, setDeclineReason] = useState("");
+  const [declineTarget, setDeclineTarget] = useState<any | null>(null);
+  const [sortOrder, setSortOrder] = useState<"newest" | "oldest">("newest");
 
   useEffect(() => {
     const unsub = subscribeToAuth((p: AuthProfile | null) => {
@@ -175,23 +185,95 @@ const FindRequests = () => {
       }
     : null;
 
+  // Guardian-requested: pending requests where I'm the preferred volunteer and I haven't declined
   const preferredRequests =
     requests && email
       ? requests.filter((r) => {
           const pref = (r.preferredVolunteerEmail || "").toLowerCase().trim();
-          return pref === emailKey;
+          if (pref !== emailKey) return false;
+          const declinedBy = (r.preferredVolunteerDeclinedBy || []) as string[];
+          if (declinedBy.some((e: string) => (e || "").toLowerCase() === emailKey)) return false;
+          return true;
         })
       : [];
 
-  const isVolunteerBusy = (req: any): boolean => {
-    if (!req || !email) return false;
-    const day = Number(req.serviceDateTS);
-    const s = toMinutes(req.startTime24);
-    const e = toMinutes(req.endTime24);
+  // Admin-assigned: assignments where I was assigned but haven't accepted yet
+  const adminAssignedRequests = React.useMemo(() => {
+    return (myAssignments || []).filter(
+      (a) => a.status === "assigned" && !a.acceptedByVolunteer
+    );
+  }, [myAssignments]);
+
+  // Unified list for display: guardian requests + admin-assigned (from assignment data)
+  const allActionableRequests = React.useMemo(() => {
+    const getCreatedMs = (r: any) => {
+      const t = r.createdAt;
+      return typeof t === "number" ? t : (t?.toMillis?.() ?? 0);
+    };
+    const fromGuardian = preferredRequests.map((r) => ({
+      type: "guardian" as const,
+      id: r.id,
+      requestId: r.id,
+      assignmentId: null as string | null,
+      elderName: r.elderName,
+      services: Array.isArray(r.services) ? r.services : r.service ? [r.service] : [],
+      serviceDateDisplay: r.serviceDateDisplay,
+      serviceDateTS: r.serviceDateTS,
+      startTime24: r.startTime24,
+      endTime24: r.endTime24,
+      startTimeText: r.startTimeText,
+      endTimeText: r.endTimeText,
+      address: r.address,
+      notes: r.notes,
+      userId: r.userId,
+      request: r,
+      sortKey: getCreatedMs(r),
+    }));
+    const fromAdmin = adminAssignedRequests.map((a) => {
+      const ts = typeof a.serviceDateTS === "number" ? a.serviceDateTS : (a.serviceDateTS?.toMillis?.() ?? 0);
+      return {
+      type: "admin" as const,
+      id: a.id,
+      requestId: a.requestId,
+      assignmentId: a.id,
+      elderName: a.elderName,
+      services: Array.isArray(a.services) ? a.services : [a.services],
+      serviceDateDisplay: ts ? new Date(ts).toLocaleDateString("en-US", { dateStyle: "long" }) : "",
+      serviceDateTS: ts,
+      startTime24: a.startTime24,
+      endTime24: a.endTime24,
+      startTimeText: a.startTimeText,
+      endTimeText: a.endTimeText,
+      address: a.address,
+      notes: a.notes,
+      userId: a.elderUserId,
+      assignment: a,
+      sortKey: getCreatedMs(a),
+    };
+    });
+    const combined = [...fromGuardian, ...fromAdmin];
+    const mult = sortOrder === "newest" ? -1 : 1;
+    return combined.sort((a, b) => mult * ((a.sortKey ?? 0) - (b.sortKey ?? 0)));
+  }, [preferredRequests, adminAssignedRequests, sortOrder]);
+
+  const isVolunteerBusy = (
+    item: { serviceDateTS?: number; startTime24?: string; endTime24?: string; assignmentId?: string | null },
+    excludeAssignmentId?: string | null
+  ): boolean => {
+    if (!item || !email) return false;
+    const day = Number(item.serviceDateTS);
+    const s = toMinutes(item.startTime24);
+    const e = toMinutes(item.endTime24);
     if (!Number.isFinite(day) || s == null || e == null) return false;
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const dayMs = todayStart.getTime();
     return myAssignments.some((a) => {
-      if (a.status === "cancelled") return false;
-      if (Number(a.serviceDateTS) !== day) return false;
+      if (a.status === "cancelled" || a.status === "declined") return false;
+      if (excludeAssignmentId && a.id === excludeAssignmentId) return false;
+      const aDay = typeof a.serviceDateTS === "number" ? a.serviceDateTS : (a.serviceDateTS?.toMillis?.() ?? 0);
+      if (aDay < dayMs) return false;
+      if (aDay !== day) return false;
       const [sh, sm] = String(a.startTime24 || "").split(":").map((x: string) => parseInt(x || "0", 10));
       const [eh, em] = String(a.endTime24 || "").split(":").map((x: string) => parseInt(x || "0", 10));
       const bs = sh * 60 + (sm || 0);
@@ -200,136 +282,187 @@ const FindRequests = () => {
     });
   };
 
-  const handleAccept = async (requestId: string) => {
+  const handleAccept = async (item: (typeof allActionableRequests)[0]) => {
     if (!volunteer || !email) {
       toast({ title: "Not eligible", description: "Only approved volunteers can accept requests.", variant: "destructive" });
       return;
     }
-    const req = preferredRequests.find((r) => r.id === requestId);
-    if (!req) {
-      toast({ title: "Request not found", variant: "destructive" });
-      return;
-    }
-    if (isVolunteerBusy(req)) {
+    if (isVolunteerBusy(item)) {
       toast({ title: "Schedule conflict", description: "You have another assignment at that time.", variant: "destructive" });
       return;
     }
 
-    setAcceptingId(requestId);
+    setAcceptingId(item.id);
     try {
-      let volunteerUid: string | null = null;
-      try {
-        if (volunteer.email) {
-          const uQ = query(collection(db, "users"), where("email", "==", volunteer.email), limit(1));
-          const uSnap = await getDocs(uQ);
-          if (!uSnap.empty) volunteerUid = uSnap.docs[0].id;
-        }
-      } catch {}
-
-      const reqRef = doc(db, "serviceRequests", requestId);
-      const assignmentRef = doc(collection(db, "assignments"));
-
-      const ratingAgg = ratingsMap[emailKey];
-      const tasksDone = tasksMap[emailKey] ?? 0;
-      const { tier, percent } = getDynamicAdjustment(tasksDone, ratingAgg?.avg);
-      const demand = { tier: "Normal" as const, percent: 0, ratio: 0 };
-
-      const perServiceHoursByName: Record<string, number> =
-        req.perServiceHoursByName && typeof req.perServiceHoursByName === "object"
-          ? req.perServiceHoursByName
-          : {};
-      const selectedServices: string[] = Array.isArray(req.services)
-        ? req.services
-        : req.service
-          ? [req.service]
-          : [];
-      const lineItems = selectedServices
-        .map((name: string) => {
-          const baseRate = SERVICE_RATES[name] ?? 0;
-          const hours = Math.max(0, Number(perServiceHoursByName?.[name] ?? 0));
-          const adjustedRate = baseRate * (1 + percent);
-          const amount = adjustedRate * hours;
-          return { name, baseRate, hours, adjustedRate, amount };
-        })
-        .filter((li: any) => li.hours > 0);
-      const subtotal = lineItems.reduce((s: number, li: any) => s + li.amount, 0);
-      const commission = subtotal * 0.05;
-      const total = subtotal + commission;
-      const confirmationNumber = genConfirmation();
-
-      const assignmentPayload = {
-        requestId,
-        volunteerDocId: volunteer.id,
-        volunteerEmail: volunteer.email || null,
-        volunteerName: volunteer.fullName,
-        volunteerUid,
-        elderUserId: req.userId || null,
-        elderName: req.elderName,
-        address: req.address,
-        services: req.services || (req.service ? [req.service] : []),
-        perServiceHoursByName: perServiceHoursByName || null,
-        serviceDateTS: req.serviceDateTS || null,
-        startTime24: req.startTime24 || null,
-        endTime24: req.endTime24 || null,
-        startTimeText: req.startTimeText || null,
-        endTimeText: req.endTimeText || null,
-        notes: req.notes || null,
-        receipt: {
-          confirmationNumber,
-          lineItems,
-          subtotal,
-          commission,
-          total,
-          dynamicPricing: {
-            tier,
-            percent,
-            components: {
-              performance: { tier, percent },
-              demand,
-            },
-          },
-        },
-        receiptIssuedAt: serverTimestamp(),
-        status: "assigned",
-        acceptedByVolunteer: true,
-        acceptedByVolunteerAt: serverTimestamp(),
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      };
-
-      await runTransaction(db, async (transaction) => {
-        const reqSnap = await transaction.get(reqRef);
-        if (!reqSnap.exists()) {
-          throw new Error("Request not found");
-        }
-        const data = reqSnap.data() as any;
-        if ((data.status || "").toLowerCase() !== "pending") {
-          throw new Error("This request was already assigned.");
-        }
-
-        transaction.update(reqRef, {
-          status: "assigned",
-          assignedTo: volunteer.fullName,
+      if (item.type === "admin") {
+        await updateDoc(doc(db, "assignments", item.assignmentId!), {
           acceptedByVolunteer: true,
           acceptedByVolunteerAt: serverTimestamp(),
-          assignedAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
         });
-        transaction.set(assignmentRef, assignmentPayload);
-      });
+        toast({ title: "Request accepted", description: "It will appear in My Assignments." });
+      } else {
+        const req = item.request!;
+        const reqRef = doc(db, "serviceRequests", item.requestId);
+        const assignmentRef = doc(collection(db, "assignments"));
 
-      toast({
-        title: "Request accepted",
-        description: `You've been assigned. It will appear in My Assignments.`,
-      });
+        let volunteerUid: string | null = null;
+        try {
+          if (volunteer.email) {
+            const uQ = query(collection(db, "users"), where("email", "==", volunteer.email), limit(1));
+            const uSnap = await getDocs(uQ);
+            if (!uSnap.empty) volunteerUid = uSnap.docs[0].id;
+          }
+        } catch {}
+
+        const ratingAgg = ratingsMap[emailKey];
+        const tasksDone = tasksMap[emailKey] ?? 0;
+        const { tier, percent } = getDynamicAdjustment(tasksDone, ratingAgg?.avg);
+        const demand = { tier: "Normal" as const, percent: 0, ratio: 0 };
+
+        const perServiceHoursByName: Record<string, number> =
+          req.perServiceHoursByName && typeof req.perServiceHoursByName === "object"
+            ? req.perServiceHoursByName
+            : {};
+        const selectedServices: string[] = Array.isArray(req.services) ? req.services : req.service ? [req.service] : [];
+        const lineItems = selectedServices
+          .map((name: string) => {
+            const baseRate = SERVICE_RATES[name] ?? 0;
+            const hours = Math.max(0, Number(perServiceHoursByName?.[name] ?? 0));
+            const adjustedRate = baseRate * (1 + percent);
+            const amount = adjustedRate * hours;
+            return { name, baseRate, hours, adjustedRate, amount };
+          })
+          .filter((li: any) => li.hours > 0);
+        const subtotal = lineItems.reduce((s: number, li: any) => s + li.amount, 0);
+        const commission = subtotal * 0.05;
+        const total = subtotal + commission;
+        const confirmationNumber = genConfirmation();
+
+        const assignmentPayload = {
+          requestId: item.requestId,
+          volunteerDocId: volunteer.id,
+          volunteerEmail: volunteer.email || null,
+          volunteerName: volunteer.fullName,
+          volunteerUid,
+          elderUserId: req.userId || null,
+          elderName: req.elderName,
+          address: req.address,
+          services: req.services || (req.service ? [req.service] : []),
+          perServiceHoursByName: perServiceHoursByName || null,
+          serviceDateTS: req.serviceDateTS || null,
+          startTime24: req.startTime24 || null,
+          endTime24: req.endTime24 || null,
+          startTimeText: req.startTimeText || null,
+          endTimeText: req.endTimeText || null,
+          notes: req.notes || null,
+          receipt: {
+            confirmationNumber,
+            lineItems,
+            subtotal,
+            commission,
+            total,
+            dynamicPricing: { tier, percent, components: { performance: { tier, percent }, demand } },
+          },
+          receiptIssuedAt: serverTimestamp(),
+          status: "assigned",
+          acceptedByVolunteer: true,
+          acceptedByVolunteerAt: serverTimestamp(),
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        };
+
+        await runTransaction(db, async (transaction) => {
+          const reqSnap = await transaction.get(reqRef);
+          if (!reqSnap.exists()) throw new Error("Request not found");
+          const data = reqSnap.data() as any;
+          if ((data.status || "").toLowerCase() !== "pending") throw new Error("This request was already assigned.");
+          transaction.update(reqRef, {
+            status: "assigned",
+            assignedTo: volunteer.fullName,
+            acceptedByVolunteer: true,
+            acceptedByVolunteerAt: serverTimestamp(),
+            assignedAt: serverTimestamp(),
+          });
+          transaction.set(assignmentRef, assignmentPayload);
+        });
+        toast({ title: "Request accepted", description: "It will appear in My Assignments." });
+      }
     } catch (e: any) {
-      const msg = e?.message ?? "Please try again.";
-      toast({
-        title: "Could not accept",
-        description: msg,
-        variant: "destructive",
-      });
+      toast({ title: "Could not accept", description: e?.message ?? "Please try again.", variant: "destructive" });
     } finally {
       setAcceptingId(null);
+    }
+  };
+
+  const handleDecline = async () => {
+    if (!declineTarget || !volunteer) return;
+    const reason = declineReason.trim();
+    if (!reason) {
+      toast({ title: "Reason required", description: "Please provide a reason for declining.", variant: "destructive" });
+      return;
+    }
+    setDecliningId(declineTarget.id);
+    try {
+      const createNotification = (recipientUid: string, title: string, body: string) =>
+        addDoc(collection(db, "notifications"), {
+          recipientUid,
+          type: "volunteer_declined",
+          title,
+          body,
+          declineReason: reason,
+          requestId: declineTarget.requestId || null,
+          assignmentId: declineTarget.assignmentId || null,
+          volunteerName: volunteer.fullName,
+          elderName: declineTarget.elderName || null,
+          createdAt: serverTimestamp(),
+          read: false,
+        });
+
+      if (declineTarget.type === "guardian") {
+        await updateDoc(doc(db, "serviceRequests", declineTarget.requestId), {
+          preferredVolunteerDeclinedBy: arrayUnion(email),
+          preferredVolunteerDeclineReason: reason,
+          preferredVolunteerDeclinedAt: serverTimestamp(),
+        });
+        if (declineTarget.userId) {
+          await createNotification(
+            declineTarget.userId,
+            "Volunteer declined your request",
+            `${volunteer.fullName} is unable to take your requested service. Your request remains open for another volunteer.`
+          );
+        }
+      } else {
+        await updateDoc(doc(db, "assignments", declineTarget.assignmentId), {
+          status: "declined",
+          declineReason: reason,
+          declinedAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+        if (declineTarget.requestId) {
+          await updateDoc(doc(db, "serviceRequests", declineTarget.requestId), {
+            status: "pending",
+            assignedTo: deleteField(),
+            acceptedByVolunteer: deleteField(),
+            acceptedByVolunteerAt: deleteField(),
+            assignedAt: deleteField(),
+          });
+        }
+        if (declineTarget.userId) {
+          await createNotification(
+            declineTarget.userId,
+            "Volunteer declined your request",
+            `${volunteer.fullName} is unable to take your requested service. Your request has been reverted to pending.`
+          );
+        }
+      }
+      setDeclineTarget(null);
+      setDeclineReason("");
+      toast({ title: "Request declined", description: "Relevant parties have been notified." });
+    } catch (e: any) {
+      toast({ variant: "destructive", title: "Could not decline", description: e?.message ?? "Please try again." });
+    } finally {
+      setDecliningId(null);
     }
   };
 
@@ -370,65 +503,102 @@ const FindRequests = () => {
           <h1 className="text-3xl font-bold">Find Requests</h1>
         </div>
         <p className="text-muted-foreground mb-6">
-          Requests where the guardian chose you as their preferred volunteer. Accept a request to be assigned.
+          Service requests for you—from guardians who chose you or assigned by admin. Accept or decline each request.
         </p>
+
+        {allActionableRequests.length > 0 && (
+          <div className="flex items-center gap-2 mb-4">
+            <span className="text-sm text-muted-foreground">Sort:</span>
+            <div className="flex rounded-lg border bg-muted/50 p-0.5">
+              {(["newest", "oldest"] as const).map((order) => (
+                <button
+                  key={order}
+                  type="button"
+                  onClick={() => setSortOrder(order)}
+                  className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
+                    sortOrder === order
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {order === "newest" ? "Newest first" : "Oldest first"}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         {requests === null ? (
           <div className="grid place-items-center py-16 text-muted-foreground">
             <Loader2 className="h-5 w-5 animate-spin mr-2" />
             Loading...
           </div>
-        ) : preferredRequests.length === 0 ? (
+        ) : allActionableRequests.length === 0 ? (
           <div className="grid place-items-center py-24 text-center">
             <Inbox className="h-12 w-12 text-muted-foreground mb-4" />
             <p className="text-muted-foreground font-medium">No requests for you right now</p>
             <p className="text-sm text-muted-foreground mt-1">
-              When a guardian selects you as their preferred volunteer, the request will appear here.
+              When a guardian selects you or admin assigns you to a request, it will appear here.
             </p>
           </div>
         ) : (
           <div className="space-y-4">
-            {preferredRequests.map((req) => {
-              const busy = isVolunteerBusy(req);
+            {allActionableRequests.map((item) => {
+              const busy = isVolunteerBusy(item, item.assignmentId);
+              const isProcessing = acceptingId === item.id || decliningId === item.id;
               return (
-                <Card key={req.id} className="border-l-4 border-l-primary">
+                <Card key={item.id} className="border bg-card">
                   <CardHeader className="pb-2">
-                    <CardTitle className="text-lg">{req.elderName}</CardTitle>
+                    <div className="flex items-center gap-2">
+                      <CardTitle className="text-lg">{item.elderName}</CardTitle>
+                      {item.type === "guardian" && <Badge variant="secondary">Preferred by guardian</Badge>}
+                      {item.type === "admin" && <Badge variant="outline">Assigned by admin</Badge>}
+                    </div>
                     <p className="text-sm text-muted-foreground">
-                      {Array.isArray(req.services) ? req.services.join(", ") : req.service}
+                      {Array.isArray(item.services) ? item.services.join(", ") : item.services}
                     </p>
                   </CardHeader>
                   <CardContent className="space-y-3">
                     <div className="flex items-center gap-2 text-sm">
                       <Calendar className="h-4 w-4 text-muted-foreground" />
-                      <span>{req.serviceDateDisplay}</span>
+                      <span>{item.serviceDateDisplay}</span>
                     </div>
                     <div className="flex items-center gap-2 text-sm">
                       <Clock className="h-4 w-4 text-muted-foreground" />
-                      <span>{req.startTimeText} – {req.endTimeText}</span>
+                      <span>{item.startTimeText} – {item.endTimeText}</span>
                     </div>
                     <div className="flex items-start gap-2 text-sm">
                       <MapPin className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
-                      <span>{req.address || "—"}</span>
+                      <span>{item.address || "—"}</span>
                     </div>
-                    {req.notes && (
+                    {item.notes && (
                       <p className="text-sm text-muted-foreground">
-                        <span className="font-medium">Notes:</span> {req.notes}
+                        <span className="font-medium">Notes:</span> {item.notes}
                       </p>
                     )}
-                    <div className="flex items-center gap-2 pt-2">
+                    <div className="flex items-center gap-2 pt-2 flex-wrap">
                       <Button
                         size="sm"
                         className="gap-2"
-                        disabled={busy || acceptingId === req.id}
-                        onClick={() => handleAccept(req.id)}
+                        disabled={busy || isProcessing}
+                        onClick={() => handleAccept(item)}
                       >
-                        {acceptingId === req.id ? (
+                        {acceptingId === item.id ? (
                           <Loader2 className="h-4 w-4 animate-spin" />
                         ) : (
                           <CheckCircle2 className="h-4 w-4" />
                         )}
-                        {busy ? "Conflicting schedule" : acceptingId === req.id ? "Accepting…" : "Accept request"}
+                        {busy ? "Conflicting schedule" : acceptingId === item.id ? "Accepting…" : "Accept"}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        className="gap-2"
+                        disabled={isProcessing}
+                        onClick={() => { setDeclineTarget(item); setDeclineReason(""); }}
+                      >
+                        <XCircle className="h-4 w-4" />
+                        Decline
                       </Button>
                       {busy && (
                         <Badge variant="secondary">You have another assignment at this time</Badge>
@@ -440,6 +610,36 @@ const FindRequests = () => {
             })}
           </div>
         )}
+
+        <Dialog open={!!declineTarget} onOpenChange={(open) => { if (!open) { setDeclineTarget(null); setDeclineReason(""); } }}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Decline Request</DialogTitle>
+              <DialogDescription>
+                Provide a reason for declining this request. It will be shared with the admin and guardian if applicable.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3 text-sm">
+              <p className="text-muted-foreground">
+                Please explain why you are declining. Your reason will be shared with the admin
+                {declineTarget?.type === "guardian" ? " and the guardian who requested you" : ""}.
+              </p>
+              <textarea
+                className="w-full rounded-md border p-3 text-sm min-h-[100px]"
+                placeholder="e.g., I have a scheduling conflict, family emergency, etc."
+                value={declineReason}
+                onChange={(e) => setDeclineReason(e.target.value)}
+                rows={4}
+              />
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => { setDeclineTarget(null); setDeclineReason(""); }}>Cancel</Button>
+                <Button variant="destructive" onClick={handleDecline} disabled={!declineReason.trim()}>
+                  {decliningId ? "Declining…" : "Decline"}
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
       </main>
     </div>
   );
