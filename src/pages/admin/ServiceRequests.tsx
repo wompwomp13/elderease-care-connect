@@ -3,13 +3,14 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { VolunteerAvatar } from "@/components/VolunteerAvatar";
-import { Calendar, Clock, MapPin, User, Inbox, Loader2, Star, BarChart3 } from "lucide-react";
+import { Calendar, Clock, MapPin, User, Inbox, Loader2, Star, BarChart3, Trash2 } from "lucide-react";
 import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious } from "@/components/ui/carousel";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { useEffect, useMemo, useState } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { db } from "@/lib/firebase";
-import { addDoc, collection, doc, getDoc, getDocs, limit, onSnapshot, orderBy, query, serverTimestamp, updateDoc, where } from "firebase/firestore";
+import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, limit, onSnapshot, orderBy, query, serverTimestamp, updateDoc, where } from "firebase/firestore";
 import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "@/components/ui/pagination";
 
 // Base hourly rates (PHP) per service
@@ -43,6 +44,8 @@ const ServiceRequests = () => {
   const [page, setPage] = useState<number>(1);
   const perPage = 5;
   const [busyByDate, setBusyByDate] = useState<Record<number, Record<string, Array<[number, number]>>>>({});
+  const [deleteTarget, setDeleteTarget] = useState<any | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   useEffect(() => {
     const q = query(collection(db, "serviceRequests"), orderBy("createdAt", "desc"));
@@ -52,7 +55,15 @@ const ServiceRequests = () => {
     return () => unsub();
   }, []);
 
-  useEffect(() => { setPage(1); }, [/* reset on new data */ requests?.length]);
+  useEffect(() => {
+    if (!requests) return;
+    if (requests.length === 0) {
+      setPage(1);
+      return;
+    }
+    const totalPages = Math.max(1, Math.ceil(requests.length / perPage));
+    setPage((p) => (p > totalPages ? totalPages : p));
+  }, [requests?.length, perPage]);
 
   useEffect(() => {
     const q = query(collection(db, "pendingVolunteers"), where("status", "==", "approved"));
@@ -453,6 +464,43 @@ const ServiceRequests = () => {
     }
   };
 
+  const handleDeleteRequest = async (requestId: string) => {
+    if (!requestId) return;
+    setDeletingId(requestId);
+    try {
+      const assignmentsSnap = await getDocs(query(collection(db, "assignments"), where("requestId", "==", requestId)));
+      const assignmentIds = assignmentsSnap.docs.map((d) => d.id);
+
+      for (const aId of assignmentIds) {
+        const ratingsSnap = await getDocs(query(collection(db, "ratings"), where("assignmentId", "==", aId)));
+        for (const r of ratingsSnap.docs) {
+          await deleteDoc(doc(db, "ratings", r.id));
+        }
+      }
+
+      const notifSnap = await getDocs(query(collection(db, "notifications"), where("requestId", "==", requestId)));
+      for (const n of notifSnap.docs) {
+        await deleteDoc(doc(db, "notifications", n.id));
+      }
+
+      for (const aId of assignmentIds) {
+        const notifByAssign = await getDocs(query(collection(db, "notifications"), where("assignmentId", "==", aId)));
+        for (const n of notifByAssign.docs) {
+          await deleteDoc(doc(db, "notifications", n.id));
+        }
+        await deleteDoc(doc(db, "assignments", aId));
+      }
+
+      await deleteDoc(doc(db, "serviceRequests", requestId));
+      toast({ title: "Request deleted", description: "The request and all related data have been removed." });
+      setDeleteTarget(null);
+    } catch (e: any) {
+      toast({ title: "Failed to delete", description: e?.message ?? "Please try again.", variant: "destructive" });
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
   const getStatusBadge = (status: string) => {
     switch (status) {
       case "assigned":
@@ -503,7 +551,18 @@ const ServiceRequests = () => {
                     <CardTitle className="text-xl">{request.elderName}</CardTitle>
                     <p className="text-lg font-semibold text-primary mt-1">{Array.isArray(request.services) ? request.services.join(", ") : request.service}</p>
                   </div>
-                  {getStatusBadge(effectiveStatus)}
+                  <div className="flex items-center gap-2">
+                    {getStatusBadge(effectiveStatus)}
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                      onClick={() => setDeleteTarget(request)}
+                      aria-label="Delete request"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </div>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -839,6 +898,35 @@ const ServiceRequests = () => {
             );
           })()}
         </div>
+
+        <AlertDialog open={!!deleteTarget} onOpenChange={(o) => { if (!o) setDeleteTarget(null); }}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete this request?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This will permanently delete the service request and all related data (assignments, notifications, ratings). This action cannot be undone.
+                {deleteTarget && (
+                  <span className="block mt-2 font-medium text-foreground">
+                    Deleting: {deleteTarget.elderName} – {Array.isArray(deleteTarget.services) ? deleteTarget.services.join(", ") : deleteTarget.service}
+                  </span>
+                )}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={!!deletingId}>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                onClick={(e) => {
+                  e.preventDefault();
+                  if (deleteTarget && !deletingId) handleDeleteRequest(deleteTarget.id);
+                }}
+                disabled={!!deletingId}
+              >
+                {deletingId ? <Loader2 className="h-4 w-4 animate-spin" /> : "Delete"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
     </AdminLayout>
   );
