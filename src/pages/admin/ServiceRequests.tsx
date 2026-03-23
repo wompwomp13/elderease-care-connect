@@ -319,8 +319,10 @@ const ServiceRequests = () => {
   const hasVolunteerDeclinedRequest = (vol: any, req: any): boolean => {
     if (!vol || !req) return false;
     const emailKey = (vol.email || "").toLowerCase();
-    const declinedBy = (req.preferredVolunteerDeclinedBy || []) as string[];
-    if (declinedBy.some((e: string) => (e || "").toLowerCase() === emailKey)) return true;
+    const preferredDeclined = (req.preferredVolunteerDeclinedBy || []) as string[];
+    if (preferredDeclined.some((e: string) => (e || "").toLowerCase() === emailKey)) return true;
+    const adminDeclined = (req.adminAssignedDeclinedBy || []) as string[];
+    if (adminDeclined.some((e: string) => (e || "").toLowerCase() === emailKey)) return true;
     const assignment = assignmentByRequest[req.id];
     if (assignment?.status === "declined" && (assignment.volunteerEmail || "").toLowerCase() === emailKey) return true;
     return false;
@@ -410,7 +412,7 @@ const ServiceRequests = () => {
         await addDoc(collection(db, "assignments"), {
           requestId,
           volunteerDocId: volunteer.id,
-          volunteerEmail: volunteer.email || null,
+          volunteerEmail: (volunteer.email || "").toLowerCase() || null,
           volunteerName: volunteer.fullName,
           volunteerUid,
           elderUserId: req.userId || null,

@@ -270,6 +270,7 @@ const FindRequests = () => {
     const dayMs = todayStart.getTime();
     return myAssignments.some((a) => {
       if (a.status === "cancelled" || a.status === "declined") return false;
+      if (!a.acceptedByVolunteer) return false;
       if (excludeAssignmentId && a.id === excludeAssignmentId) return false;
       const aDay = typeof a.serviceDateTS === "number" ? a.serviceDateTS : (a.serviceDateTS?.toMillis?.() ?? 0);
       if (aDay < dayMs) return false;
@@ -287,7 +288,7 @@ const FindRequests = () => {
       toast({ title: "Not eligible", description: "Only approved volunteers can accept requests.", variant: "destructive" });
       return;
     }
-    if (isVolunteerBusy(item)) {
+    if (isVolunteerBusy(item, item.assignmentId)) {
       toast({ title: "Schedule conflict", description: "You have another assignment at that time.", variant: "destructive" });
       return;
     }
@@ -342,7 +343,7 @@ const FindRequests = () => {
         const assignmentPayload = {
           requestId: item.requestId,
           volunteerDocId: volunteer.id,
-          volunteerEmail: volunteer.email || null,
+          volunteerEmail: (volunteer.email || "").toLowerCase() || null,
           volunteerName: volunteer.fullName,
           volunteerUid,
           elderUserId: req.userId || null,
@@ -446,6 +447,7 @@ const FindRequests = () => {
             acceptedByVolunteer: deleteField(),
             acceptedByVolunteerAt: deleteField(),
             assignedAt: deleteField(),
+            adminAssignedDeclinedBy: arrayUnion(email),
           });
         }
         if (declineTarget.userId) {

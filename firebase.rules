@@ -46,12 +46,56 @@ service cloud.firestore {
       allow create, update, delete: if false; // server-only
     }
 
-    // Example: service requests could live here later
+    // Service requests
     match /serviceRequests/{id} {
       allow read: if isSignedIn();
       allow create: if isSignedIn();
       allow update: if isSignedIn();
       allow delete: if false;
+    }
+
+    // Assignments - volunteers accept/decline, mark complete, rate; elders confirm
+    match /assignments/{assignmentId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn();
+      allow update: if isSignedIn() && (
+        isAdmin()
+        || isVolunteerUpdatingOwnAssignment(assignmentId)
+        || isElderConfirmingOwnAssignment(assignmentId)
+      );
+      allow delete: if false;
+
+      function isAdmin() {
+        return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+      }
+      function isVolunteerUpdatingOwnAssignment(assignmentId) {
+        let a = get(/databases/$(database)/documents/assignments/$(assignmentId)).data;
+        return a.volunteerEmail != null
+          && a.volunteerEmail == request.auth.token.email
+          && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['status','rated','awaitingGuardianConfirm','updatedAt','declinedAt','declineReason','acceptedByVolunteer','acceptedByVolunteerAt','rated']);
+      }
+      function isElderConfirmingOwnAssignment(assignmentId) {
+        let a = get(/databases/$(database)/documents/assignments/$(assignmentId)).data;
+        return a.elderUserId != null
+          && a.elderUserId == request.auth.uid
+          && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['guardianConfirmed','updatedAt']);
+      }
+    }
+
+    // Notifications - created by app, read by recipient
+    match /notifications/{id} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn();
+      allow update, delete: if false;
+    }
+
+    // Ratings
+    match /ratings/{id} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn();
+      allow update, delete: if false;
     }
 
     function isSignedIn() {
