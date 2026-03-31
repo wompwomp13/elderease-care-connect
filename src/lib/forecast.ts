@@ -55,6 +55,37 @@ export function predictNext(
   return forecast;
 }
 
+export type BuildForecastSeriesResult = {
+  actual: number[];
+  forecast: number[] | null;
+  insufficient: boolean;
+  /** Last value of the sliced series (before prediction). */
+  lastActual: number;
+};
+
+/**
+ * Slice to last `forecastWindow` points, require ≥2 non-zero samples to forecast.
+ */
+export function buildForecastSeries(
+  values: number[],
+  forecastWindow: number,
+  forecastHorizon: number,
+  forecastMethod: ForecastMethod
+): BuildForecastSeriesResult {
+  const series = values.slice(-forecastWindow);
+  const validPoints = series.filter((v) => v > 0).length;
+  const lastActual = series[series.length - 1] ?? 0;
+  if (validPoints < 2) {
+    return { actual: series, forecast: null, insufficient: true, lastActual };
+  }
+  return {
+    actual: series,
+    forecast: predictNext(series, forecastHorizon, forecastMethod),
+    insufficient: false,
+    lastActual,
+  };
+}
+
 /**
  * Compute period-over-period percentage change.
  * (current - previous) / previous * 100

@@ -1,7 +1,6 @@
-import { Link, useLocation } from "react-router-dom";
+import { CompanionNavbar } from "@/components/companion/CompanionNavbar";
+import { subscribeToAuth, type AuthProfile } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
-import { getCurrentUser, logout, subscribeToAuth, type AuthProfile } from "@/lib/auth";
-import logo from "@/assets/logo.png";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useEffect, useRef, useState } from "react";
 import { IdDocumentView } from "@/components/IdDocumentView";
@@ -11,36 +10,6 @@ import { collection, onSnapshot, query, where } from "firebase/firestore";
 import { db, storage } from "@/lib/firebase";
 import { useToast } from "@/hooks/use-toast";
 import { AlertCircle, Camera, Loader2, Trash2, User } from "lucide-react";
-
-const CompanionNavbar = () => {
-  const user = getCurrentUser();
-  const location = useLocation();
-  const isActive = (path: string) => location.pathname === path;
-  return (
-    <nav className="bg-primary text-primary-foreground sticky top-0 z-50 shadow-md">
-      <div className="container mx-auto h-16 px-4 flex items-center justify-between">
-        <Link to="/companion" className="flex items-center gap-2" aria-label="ElderEase Companion Home" tabIndex={0}>
-          <img src={logo} alt="ElderEase Logo" className="h-8 w-8" />
-          <span className="text-lg font-bold">ElderEase Companion</span>
-        </Link>
-        <div className="hidden md:flex items-center gap-5" role="navigation" aria-label="Primary">
-          <Link to="/companion" className={`transition-opacity ${isActive("/companion") ? "font-semibold underline underline-offset-8 opacity-100" : "opacity-90 hover:opacity-100"}`}>Dashboard</Link>
-          <Link to="/companion/assignments" className={`transition-opacity ${isActive("/companion/assignments") ? "font-semibold underline underline-offset-8 opacity-100" : "opacity-90 hover:opacity-100"}`}>My Assignments</Link>
-          <Link to="/companion/requests" className={`transition-opacity ${isActive("/companion/requests") ? "font-semibold underline underline-offset-8 opacity-100" : "opacity-90 hover:opacity-100"}`}>Find Requests</Link>
-          <Link to="/companion/activity" className={`transition-opacity ${isActive("/companion/activity") ? "font-semibold underline underline-offset-8 opacity-100" : "opacity-90 hover:opacity-100"}`}>Activity Log</Link>
-          <Link to="/companion/profile" className={`transition-opacity ${isActive("/companion/profile") ? "font-semibold underline underline-offset-8 opacity-100" : "opacity-90 hover:opacity-100"}`}>Profile</Link>
-          {user ? (
-            <Button variant="nav" size="sm" onClick={() => { logout(); window.location.href = "/"; }} aria-label="Log out">Logout</Button>
-          ) : (
-            <Link to="/login">
-              <Button variant="nav" size="sm">Login</Button>
-            </Link>
-          )}
-        </div>
-      </div>
-    </nav>
-  );
-};
 
 const MAX_PHOTO_SIZE_MB = 2;
 const MAX_PHOTO_SIZE_BYTES = MAX_PHOTO_SIZE_MB * 1024 * 1024;

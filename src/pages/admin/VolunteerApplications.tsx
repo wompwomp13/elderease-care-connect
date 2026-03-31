@@ -2,7 +2,7 @@ import AdminLayout from "@/components/layout/AdminLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Check, X, Mail, Phone, Calendar, MapPin, Inbox, Loader2, FileText, Search, ImageOff } from "lucide-react";
+import { Check, X, Mail, Phone, Calendar, MapPin, Inbox, Loader2, FileText, Search, ImageOff, Expand } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { db } from "@/lib/firebase";
@@ -155,24 +155,36 @@ const VolunteerApplications = () => {
                         <button
                           type="button"
                           onClick={() => setIdPreview({ url: app.idFileUrl!, name: app.fullName, isPdf: true })}
-                          className="w-full aspect-video rounded-xl border-2 border-muted bg-muted/30 flex flex-col items-center justify-center gap-2 hover:border-primary/50 hover:bg-muted/50 transition-all cursor-pointer shadow-sm"
+                          className="relative w-full aspect-video rounded-xl border-2 border-muted bg-muted/30 flex flex-col items-center justify-center gap-2 hover:border-primary/50 hover:bg-muted/50 transition-all cursor-pointer shadow-sm"
                         >
                           <FileText className="h-10 w-10 text-muted-foreground" />
                           <span className="text-xs font-medium text-center px-2">PDF</span>
                           <span className="text-[10px] text-muted-foreground">Click to view</span>
+                          <span
+                            className="pointer-events-none absolute bottom-1.5 right-1.5 flex h-7 w-7 items-center justify-center rounded-md border border-border/80 bg-background/90 text-foreground shadow-sm"
+                            aria-hidden
+                          >
+                            <Expand className="h-3.5 w-3.5 opacity-80" />
+                          </span>
                         </button>
                       ) : (
                         <button
                           type="button"
                           onClick={() => setIdPreview({ url: app.idFileUrl!, name: app.fullName, isPdf: false })}
-                          className="block w-full aspect-video rounded-xl border-2 border-muted overflow-hidden bg-muted/20 hover:border-primary/50 transition-all group cursor-pointer text-left shadow-sm"
+                          className="relative block w-full aspect-video rounded-xl border-2 border-muted overflow-hidden bg-muted/20 hover:border-primary/50 transition-all group cursor-pointer text-left shadow-sm"
                         >
                           <img
                             src={app.idFileUrl}
                             alt={`ID for ${app.fullName}`}
                             className="w-full h-full object-contain bg-muted/30 group-hover:scale-[1.02] transition-transform duration-200"
                           />
-                          <span className="sr-only">Click to view full size</span>
+                          <span
+                            className="pointer-events-none absolute bottom-1.5 right-1.5 flex h-7 w-7 items-center justify-center rounded-md border border-border/80 bg-background/90 text-foreground shadow-sm"
+                            aria-hidden
+                          >
+                            <Expand className="h-3.5 w-3.5 opacity-80" />
+                          </span>
+                          <span className="sr-only">Open full-size ID image</span>
                         </button>
                       )
                     ) : (

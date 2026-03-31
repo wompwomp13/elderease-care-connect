@@ -1,40 +1,11 @@
 import { Link } from "react-router-dom";
-import { getCurrentUser, logout } from "@/lib/auth";
-import { Button } from "@/components/ui/button";
+import { ElderNavbar } from "@/components/elder/ElderNavbar";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import logo from "@/assets/logo.png";
 import volunteerSarah from "@/assets/volunteer-sarah.jpg";
 import volunteerJohn from "@/assets/volunteer-john.jpg";
 import volunteerEmily from "@/assets/volunteer-emily.jpg";
 import { HeartHandshake, Home, ShoppingBasket, Users, Star, Clock, DollarSign, TrendingUp } from "lucide-react";
-
-const ElderNavbar = () => {
-  const user = getCurrentUser();
-  return (
-    <nav className="bg-primary text-primary-foreground sticky top-0 z-50 shadow-md">
-      <div className="container mx-auto h-16 px-4 flex items-center justify-between">
-        <Link to="/elder" className="flex items-center gap-2">
-          <img src={logo} alt="ElderEase Logo" className="h-8 w-8" />
-          <span className="text-lg font-bold">ElderEase</span>
-        </Link>
-        <div className="hidden md:flex items-center gap-5">
-          <Link to="/elder" className="opacity-90 hover:opacity-100 transition-opacity">Home</Link>
-          <Link to="/elder/services-info" className="opacity-90 hover:opacity-100 transition-opacity">Services</Link>
-          <Link to="/elder/browse-services" className="font-semibold underline underline-offset-8 opacity-100">Browse</Link>
-          <Link to="/elder/request-service" className="opacity-90 hover:opacity-100 transition-opacity">Request Service</Link>
-          {user ? (
-            <Button variant="nav" size="sm" onClick={() => { logout(); window.location.href = "/"; }}>
-              Logout
-            </Button>
-          ) : (
-            <Link to="/login"><Button variant="nav" size="sm">Login</Button></Link>
-          )}
-        </div>
-      </div>
-    </nav>
-  );
-};
 
 const serviceListings = [
   {
@@ -128,7 +99,7 @@ const BrowseServices = () => {
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-background to-muted/20">
-      <ElderNavbar />
+      <ElderNavbar variant="browse" />
       
       <div className="container mx-auto px-4 py-12 max-w-7xl">
         {/* Header */}

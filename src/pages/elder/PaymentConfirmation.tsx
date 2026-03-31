@@ -1,38 +1,12 @@
 import { useEffect, useMemo } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { getCurrentUser, logout } from "@/lib/auth";
-import { Button } from "@/components/ui/button";
+import { ElderNavbar } from "@/components/elder/ElderNavbar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
-import logo from "@/assets/logo.png";
 import { CheckCircle, Calendar, Clock, DollarSign, User, MapPin, Home } from "lucide-react";
 import { minutesSinceMidnight } from "@/lib/time";
 
 type PerServiceHours = Record<string, number>;
-
-const ElderNavbar = () => {
-  const user = getCurrentUser();
-  return (
-    <nav className="bg-primary text-primary-foreground sticky top-0 z-50 shadow-md">
-      <div className="container mx-auto h-16 px-4 flex items-center justify-between">
-        <Link to="/elder" className="flex items-center gap-2">
-          <img src={logo} alt="ElderEase Logo" className="h-8 w-8" />
-          <span className="text-lg font-bold">ElderEase</span>
-        </Link>
-        <div className="hidden md:flex items-center gap-5">
-          <Link to="/elder" className="opacity-90 hover:opacity-100 transition-opacity">Home</Link>
-          {user ? (
-            <Button variant="nav" size="sm" onClick={() => { logout(); window.location.href = "/"; }}>
-              Logout
-            </Button>
-          ) : (
-            <Link to="/login"><Button variant="nav" size="sm">Login</Button></Link>
-          )}
-        </div>
-      </div>
-    </nav>
-  );
-};
 
 const PaymentConfirmation = () => {
   const location = useLocation();
@@ -121,7 +95,7 @@ const PaymentConfirmation = () => {
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-background to-muted/20">
-      <ElderNavbar />
+      <ElderNavbar variant="minimal" />
       
       <div className="container mx-auto px-4 py-12 max-w-3xl">
         {/* Success Header */}

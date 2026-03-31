@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
-import { getCurrentUser, logout } from "@/lib/auth";
+import { getCurrentUser } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -8,7 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import logo from "@/assets/logo.png";
+import { ElderNavbar } from "@/components/elder/ElderNavbar";
 import { ChevronLeft, HeartHandshake, Home, ShoppingBasket, Users, Calendar as CalendarIcon, Check } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { format } from "date-fns";
@@ -16,44 +16,10 @@ import TimeRangePicker from "@/components/ui/time-range-picker";
 import { VolunteerAvatar } from "@/components/VolunteerAvatar";
 import { format12h, isEndAfterStart } from "@/lib/time";
 import { cn } from "@/lib/utils";
+import { leaveDocOverlapsCalendarDay } from "@/lib/volunteer-leave";
 import { db } from "@/lib/firebase";
+import { SERVICE_REQUEST_PENDING_NOTIF_TYPE } from "@/lib/guardian-notifications";
 import { addDoc, collection, getDocs, onSnapshot, query, serverTimestamp, where } from "firebase/firestore";
-
-const ElderNavbar = () => {
-  const user = getCurrentUser();
-  const location = useLocation();
-  const isActive = (path: string) => location.pathname === path;
-  return (
-    <nav className="bg-primary text-primary-foreground sticky top-0 z-50 shadow-md">
-      <div className="container mx-auto h-16 px-4 flex items-center justify-between">
-        <Link to="/elder" className="flex items-center gap-2">
-          <img src={logo} alt="ElderEase Logo" className="h-8 w-8" />
-          <span className="text-lg font-bold">ElderEase</span>
-        </Link>
-        <div className="hidden md:flex items-center gap-5">
-          <Link to="/elder" className={`transition-opacity ${isActive("/elder") ? "font-semibold underline underline-offset-8 opacity-100" : "opacity-90 hover:opacity-100"}`}>Home</Link>
-          <Link to="/elder/schedule" className={`transition-opacity ${isActive("/elder/schedule") ? "font-semibold underline underline-offset-8 opacity-100" : "opacity-90 hover:opacity-100"}`}>My Schedule</Link>
-          <Link to="/elder/request-service" className={`transition-opacity ${isActive("/elder/request-service") ? "font-semibold underline underline-offset-8 opacity-100" : "opacity-90 hover:opacity-100"}`}>Request Service</Link>
-          <Link to="/elder/notifications" className={`transition-opacity ${isActive("/elder/notifications") ? "font-semibold underline underline-offset-8 opacity-100" : "opacity-90 hover:opacity-100"}`}>Notifications</Link>
-          <button className="hover:opacity-80 transition-opacity">Profile</button>
-          {user ? (
-            <Button
-              variant="nav"
-              size="sm"
-              onClick={() => { logout(); window.location.href = "/"; }}
-            >
-              Logout
-            </Button>
-          ) : (
-            <Link to="/login">
-              <Button variant="nav" size="sm">Login</Button>
-            </Link>
-          )}
-        </div>
-      </div>
-    </nav>
-  );
-};
 
 const services = [
   {
@@ -88,6 +54,10 @@ const services = [
 
 // Static times replaced by precise time range picker
 
+/** Inputs pre-filled from the signed-in account’s last request: border + red value text */
+const REPEAT_CLIENT_FIELD_CLASS =
+  "border-rose-300 ring-2 ring-rose-400/20 text-rose-600 placeholder:text-rose-400/70 dark:text-rose-400 dark:placeholder:text-rose-500/60";
+
 const RequestService = () => {
   const navigate = useNavigate();
   const user = getCurrentUser();
@@ -112,10 +82,11 @@ const RequestService = () => {
   const [tasksMap, setTasksMap] = useState<Record<string, number>>({});
   const [preferredVolunteerEmail, setPreferredVolunteerEmail] = useState<string | null>(null);
   const [preferredVolunteerName, setPreferredVolunteerName] = useState<string | null>(null);
-  const [busyByEmail, setBusyByEmail] = useState<Record<string, Array<[number, number]>>>({}); // for selected date only
+  const [busyByEmail, setBusyByEmail] = useState<Record<string, Array<[number, number]>>>({}); // assignment intervals for selected date only
+  const [leaveEmailsOnDay, setLeaveEmailsOnDay] = useState<Set<string>>(() => new Set());
   const [busyLoading, setBusyLoading] = useState<boolean>(false);
 
-  // Track which client fields were auto-filled (red outline = no need to edit)
+  // Track which client fields were auto-filled from account history (red outline + red text = no need to edit)
   const [autoFilledFields, setAutoFilledFields] = useState<Set<string>>(new Set());
   const clearAutoFilled = (field: string) => {
     setAutoFilledFields((prev) => {
@@ -288,6 +259,28 @@ const RequestService = () => {
     return () => unsub();
   }, [selectedDate]);
 
+  // Volunteers on full-day leave for selected service date
+  useEffect(() => {
+    if (!selectedDate) {
+      setLeaveEmailsOnDay(new Set());
+      return;
+    }
+    const dayMs = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate()).getTime();
+    // Single-field query avoids composite index requirement; overlap is confirmed client-side.
+    const q = query(collection(db, "volunteerLeave"), where("endDayMs", ">=", dayMs));
+    const unsub = onSnapshot(q, (snap) => {
+      const next = new Set<string>();
+      snap.docs.forEach((d) => {
+        const row = leaveDocOverlapsCalendarDay(d.data() as Record<string, unknown>, dayMs);
+        if (!row) return;
+        const em = row.volunteerEmail.toLowerCase().trim();
+        if (em) next.add(em);
+      });
+      setLeaveEmailsOnDay(next);
+    });
+    return () => unsub();
+  }, [selectedDate]);
+
   const toMinutes = (t?: string | null) => {
     if (!t) return null;
     const [h, m] = String(t).split(":").map((x: string) => parseInt(x || "0", 10));
@@ -305,8 +298,11 @@ const RequestService = () => {
       const ratingAgg = ratingsMap[email];
       const tasksDone = tasksMap[email] ?? 0;
       const intervals = busyByEmail[email] || [];
+      const onLeave = leaveEmailsOnDay.has(email);
       let available: boolean | null = null;
-      if (!busyLoading && rs != null && re != null) {
+      if (onLeave) {
+        available = false;
+      } else if (!busyLoading && rs != null && re != null) {
         available = !intervals.some(([bs, be]) => hasOverlap(rs, re, bs, be));
       }
       return {
@@ -314,6 +310,7 @@ const RequestService = () => {
         rating: ratingAgg?.avg ?? null,
         ratingCount: ratingAgg?.count ?? 0,
         tasksCompleted: tasksDone,
+        onLeave,
         available,
       };
     })
@@ -324,9 +321,9 @@ const RequestService = () => {
       if (b.available === true) return 1;
       return 0;
     });
-  }, [volunteers, ratingsMap, tasksMap, busyByEmail, startTime, endTime]);
+  }, [volunteers, ratingsMap, tasksMap, busyByEmail, leaveEmailsOnDay, busyLoading, startTime, endTime]);
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     setServicesError(null);
     setTimeError(null);
     if (!familyName.trim() || !firstName.trim() || !clientAge.trim() || !clientAddress.trim() || !gender) {
@@ -375,10 +372,12 @@ const RequestService = () => {
         toast({ title: "Checking availability", description: "Please wait a moment while we verify your preferred volunteer's schedule.", variant: "destructive" });
         return;
       }
-      if (sel && sel.available === false) {
+      if (sel && (sel.onLeave || sel.available === false)) {
         toast({
-          title: "Preferred volunteer unavailable",
-          description: "Your preferred volunteer isn’t available at the selected time. Please pick another time or submit without a preference.",
+          title: sel.onLeave ? "Preferred volunteer on leave" : "Preferred volunteer unavailable",
+          description: sel.onLeave
+            ? "That volunteer marked this day as time off. Choose another date or a different volunteer."
+            : "Your preferred volunteer isn’t available at the selected time. Please pick another time or submit without a preference.",
           variant: "destructive",
         });
         return;
@@ -419,13 +418,26 @@ const RequestService = () => {
       createdAt: serverTimestamp(),
     };
 
-    addDoc(collection(db, "serviceRequests"), payload)
-      .then(() => {
-        setShowSubmittedDialog(true);
-      })
-      .catch((err) => {
-        toast({ title: "Failed to submit request", description: err?.message ?? "Please try again.", variant: "destructive" });
-    });
+    try {
+      const docRef = await addDoc(collection(db, "serviceRequests"), payload);
+      const uid = currentUser?.id;
+      if (uid) {
+        const servicesLabel = serviceNames.join(", ");
+        await addDoc(collection(db, "notifications"), {
+          recipientUid: uid,
+          type: SERVICE_REQUEST_PENDING_NOTIF_TYPE,
+          title: "Request received — awaiting confirmation",
+          body: `We're coordinating a volunteer for ${servicesLabel} on ${format(selectedDate, "PPP")} (${format12h(startTime)} – ${format12h(endTime)}). You'll receive another notification here when the visit is confirmed, including your receipt and next steps. You can also track status from your dashboard.`,
+          requestId: docRef.id,
+          read: false,
+          createdAt: serverTimestamp(),
+        });
+      }
+      setShowSubmittedDialog(true);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Please try again.";
+      toast({ title: "Failed to submit request", description: message, variant: "destructive" });
+    }
   };
 
   return (
@@ -446,7 +458,14 @@ const RequestService = () => {
             <Card>
               <CardHeader>
                 <CardTitle>Client Information</CardTitle>
-                <CardDescription>Please provide details about who will receive the service</CardDescription>
+                <CardDescription>
+                  Please provide details about who will receive the service
+                  {autoFilledFields.size > 0 && (
+                    <span className="mt-1.5 block text-muted-foreground">
+                      We’ve carried over your loved one’s details from your last request here—feel free to change anything, or leave it as is.
+                    </span>
+                  )}
+                </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="grid sm:grid-cols-2 gap-3">
@@ -457,7 +476,7 @@ const RequestService = () => {
                       placeholder="e.g., Dela Cruz"
                       value={familyName}
                       onChange={(e) => { setFamilyName(e.target.value); clearAutoFilled("familyName"); }}
-                      className={cn("mt-1.5", autoFilledFields.has("familyName") && "border-rose-300 ring-2 ring-rose-400/20")}
+                      className={cn("mt-1.5", autoFilledFields.has("familyName") && REPEAT_CLIENT_FIELD_CLASS)}
                     />
                   </div>
                   <div>
@@ -467,7 +486,7 @@ const RequestService = () => {
                       placeholder="e.g., Juan"
                       value={firstName}
                       onChange={(e) => { setFirstName(e.target.value); clearAutoFilled("firstName"); }}
-                      className={cn("mt-1.5", autoFilledFields.has("firstName") && "border-rose-300 ring-2 ring-rose-400/20")}
+                      className={cn("mt-1.5", autoFilledFields.has("firstName") && REPEAT_CLIENT_FIELD_CLASS)}
                     />
                   </div>
                 </div>
@@ -479,13 +498,13 @@ const RequestService = () => {
                       placeholder="Optional"
                       value={middleName}
                       onChange={(e) => { setMiddleName(e.target.value); clearAutoFilled("middleName"); }}
-                      className={cn("mt-1.5", autoFilledFields.has("middleName") && "border-rose-300 ring-2 ring-rose-400/20")}
+                      className={cn("mt-1.5", autoFilledFields.has("middleName") && REPEAT_CLIENT_FIELD_CLASS)}
                     />
                   </div>
                   <div>
                     <Label>Gender *</Label>
                     <Select value={gender} onValueChange={(v) => { setGender(v); clearAutoFilled("gender"); }}>
-                      <SelectTrigger className={cn("mt-1.5", autoFilledFields.has("gender") && "border-rose-300 ring-2 ring-rose-400/20")}>
+                      <SelectTrigger className={cn("mt-1.5", autoFilledFields.has("gender") && REPEAT_CLIENT_FIELD_CLASS)}>
                         <SelectValue placeholder="Select gender" />
                       </SelectTrigger>
                       <SelectContent>
@@ -505,7 +524,7 @@ const RequestService = () => {
                     placeholder="Enter age"
                     value={clientAge}
                     onChange={(e) => { setClientAge(e.target.value); clearAutoFilled("clientAge"); }}
-                    className={cn("mt-1.5", autoFilledFields.has("clientAge") && "border-rose-300 ring-2 ring-rose-400/20")}
+                    className={cn("mt-1.5", autoFilledFields.has("clientAge") && REPEAT_CLIENT_FIELD_CLASS)}
                   />
                 </div>
                 <div>
@@ -516,7 +535,7 @@ const RequestService = () => {
                     value={clientAddress}
                     onChange={(e) => { setClientAddress(e.target.value); clearAutoFilled("clientAddress"); }}
                     rows={3}
-                    className={cn("mt-1.5", autoFilledFields.has("clientAddress") && "border-rose-300 ring-2 ring-rose-400/20")}
+                    className={cn("mt-1.5", autoFilledFields.has("clientAddress") && REPEAT_CLIENT_FIELD_CLASS)}
                   />
                 </div>
               </CardContent>
@@ -681,7 +700,10 @@ const RequestService = () => {
                             {selected ? selected.fullName || selected.email : (enrichedVolunteers.length ? selectedLabel : "Loading volunteers...")}
                           </span>
                         </SelectTrigger>
-                        <SelectContent className="max-h-96 p-0">
+                        <SelectContent
+                          position="popper"
+                          className="max-h-none p-0 [&>button]:hidden [&_[data-radix-select-viewport]]:max-h-[min(22rem,65svh)] [&_[data-radix-select-viewport]]:overflow-y-auto [&_[data-radix-select-viewport]]:scroll-smooth [&_[data-radix-select-viewport]]:overscroll-y-contain"
+                        >
                           <SelectItem value={ANY_VOLUNTEER} className="py-2">
                             <span className="text-muted-foreground italic">Any volunteer (no preference)</span>
                           </SelectItem>
@@ -689,7 +711,14 @@ const RequestService = () => {
                             const email = (v.email || "").toLowerCase();
                             const rating = typeof v.rating === "number" ? v.rating.toFixed(1) : "—";
                             const tasks = v.tasksCompleted ?? 0;
-                            const availabilityLabel = v.available == null ? "Pick date & time to check" : (v.available ? "Available" : "Unavailable");
+                            const availabilityLabel = v.onLeave
+                              ? "Unavailable (on leave)"
+                              : v.available == null
+                                ? "Pick date & time to check"
+                                : v.available
+                                  ? "Available"
+                                  : "Unavailable";
+                            const lineNeutral = v.onLeave || v.available === false;
                             return (
                               <SelectItem key={email} value={email} className="py-2">
                                 <div className="flex items-center gap-2">
@@ -700,7 +729,11 @@ const RequestService = () => {
                                   <div className="text-xs text-muted-foreground">
                                     Rating: {rating} • Tasks: {tasks}
                                   </div>
-                                    <div className={`text-xs ${v.available === false ? "text-destructive" : "text-emerald-600"}`}>
+                                    <div
+                                      className={`text-xs ${
+                                        lineNeutral ? "text-destructive" : v.available === true ? "text-emerald-600" : "text-muted-foreground"
+                                      }`}
+                                    >
                                       {availabilityLabel}
                                     </div>
                                   </div>
@@ -724,8 +757,22 @@ const RequestService = () => {
                                 </p>
                               </div>
                             </div>
-                            <span className={`text-xs px-2 py-1 rounded-full shrink-0 ${selected.available === false ? "bg-destructive/10 text-destructive" : "bg-emerald-500/10 text-emerald-700"}`}>
-                              {selected.available == null ? "Pick date & time" : selected.available ? "Available" : "Unavailable"}
+                            <span
+                              className={`text-xs px-2 py-1 rounded-full shrink-0 ${
+                                selected.onLeave || selected.available === false
+                                  ? "bg-destructive/10 text-destructive"
+                                  : selected.available === true
+                                    ? "bg-emerald-500/10 text-emerald-700"
+                                    : "bg-muted text-muted-foreground"
+                              }`}
+                            >
+                              {selected.onLeave
+                                ? "On leave"
+                                : selected.available == null
+                                  ? "Pick date & time"
+                                  : selected.available
+                                    ? "Available"
+                                    : "Unavailable"}
                             </span>
                           </div>
                         </div>

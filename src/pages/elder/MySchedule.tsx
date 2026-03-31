@@ -1,11 +1,11 @@
-import { Link, useLocation } from "react-router-dom";
-import { getCurrentUser, logout, subscribeToAuth, type AuthProfile } from "@/lib/auth";
+import { Link } from "react-router-dom";
+import { getCurrentUser, subscribeToAuth, type AuthProfile } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import logo from "@/assets/logo.png";
+import { ElderNavbar } from "@/components/elder/ElderNavbar";
 import nurseImg from "@/assets/volunteer-nurse.png";
 import courierImg from "@/assets/volunteer-courier.jpg";
 import { Calendar, MapPin, Clock, Phone, HeartHandshake, ShoppingBasket, User } from "lucide-react";
@@ -15,36 +15,6 @@ import { addDoc, collection, doc, onSnapshot, orderBy, query, serverTimestamp, u
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Star as StarIcon } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
-
-const ElderNavbar = () => {
-  const user = getCurrentUser();
-  const location = useLocation();
-  const isActive = (path: string) => location.pathname === path;
-  return (
-    <nav className="bg-primary text-primary-foreground sticky top-0 z-50 shadow-md">
-      <div className="container mx-auto h-16 px-4 flex items-center justify-between">
-        <Link to="/elder" className="flex items-center gap-2" aria-label="ElderEase Home" tabIndex={0}>
-          <img src={logo} alt="ElderEase Logo" className="h-8 w-8" />
-          <span className="text-lg font-bold">ElderEase</span>
-        </Link>
-        <div className="hidden md:flex items-center gap-5" role="navigation" aria-label="Primary">
-          <Link to="/elder" className={`transition-opacity ${isActive("/elder") ? "font-semibold underline underline-offset-8 opacity-100" : "opacity-90 hover:opacity-100"}`}>Home</Link>
-          <Link to="/elder/schedule" className={`transition-opacity ${isActive("/elder/schedule") ? "font-semibold underline underline-offset-8 opacity-100" : "opacity-90 hover:opacity-100"}`}>My Schedule</Link>
-          <Link to="/elder/request-service" className={`transition-opacity ${isActive("/elder/request-service") ? "font-semibold underline underline-offset-8 opacity-100" : "opacity-90 hover:opacity-100"}`}>Request Service</Link>
-          <Link to="/elder/notifications" className={`transition-opacity ${isActive("/elder/notifications") ? "font-semibold underline underline-offset-8 opacity-100" : "opacity-90 hover:opacity-100"}`}>Notifications</Link>
-          <button className="hover:opacity-80 transition-opacity">Profile</button>
-          {user ? (
-            <Button variant="nav" size="sm" onClick={() => { logout(); window.location.href = "/"; }} aria-label="Log out">Logout</Button>
-          ) : (
-            <Link to="/login">
-              <Button variant="nav" size="sm">Login</Button>
-            </Link>
-          )}
-        </div>
-      </div>
-    </nav>
-  );
-};
 
 const MySchedule = () => {
   const user = getCurrentUser();

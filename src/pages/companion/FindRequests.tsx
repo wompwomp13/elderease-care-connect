@@ -1,8 +1,9 @@
-import { Link, useLocation } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { getCurrentUser, logout, subscribeToAuth, type AuthProfile } from "@/lib/auth";
+import { getCurrentUser, subscribeToAuth, type AuthProfile } from "@/lib/auth";
+import { CompanionNavbar } from "@/components/companion/CompanionNavbar";
 import { db } from "@/lib/firebase";
 import {
   collection,
@@ -32,8 +33,8 @@ import {
   ArrowLeft,
   XCircle,
 } from "lucide-react";
-import logo from "@/assets/logo.png";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { cn } from "@/lib/utils";
 import {
   getDynamicAdjustment,
   genConfirmation,
@@ -41,36 +42,11 @@ import {
   SERVICE_RATES,
   toMinutes,
 } from "@/lib/assignmentHelpers";
+import { deletePendingServiceRequestNotifications } from "@/lib/guardian-notifications";
+import { getAssignmentServiceDayMs, isDayCoveredByLeave, parseLeaveDoc } from "@/lib/volunteer-leave";
 
-const CompanionNavbar = () => {
-  const user = getCurrentUser();
-  const location = useLocation();
-  const isActive = (path: string) => location.pathname === path;
-  return (
-    <nav className="bg-primary text-primary-foreground sticky top-0 z-50 shadow-md">
-      <div className="container mx-auto h-16 px-4 flex items-center justify-between">
-        <Link to="/companion" className="flex items-center gap-2" aria-label="ElderEase Companion Home" tabIndex={0}>
-          <img src={logo} alt="ElderEase Logo" className="h-8 w-8" />
-          <span className="text-lg font-bold">ElderEase Companion</span>
-        </Link>
-        <div className="hidden md:flex items-center gap-5">
-          <Link to="/companion" className={isActive("/companion") ? "font-semibold underline underline-offset-8" : "opacity-90 hover:opacity-100"}>Dashboard</Link>
-          <Link to="/companion/assignments" className={isActive("/companion/assignments") ? "font-semibold underline underline-offset-8" : "opacity-90 hover:opacity-100"}>My Assignments</Link>
-          <Link to="/companion/requests" className={isActive("/companion/requests") ? "font-semibold underline underline-offset-8" : "opacity-90 hover:opacity-100"}>Find Requests</Link>
-          <Link to="/companion/activity" className={isActive("/companion/activity") ? "font-semibold underline underline-offset-8" : "opacity-90 hover:opacity-100"}>Activity Log</Link>
-          <Link to="/companion/profile" className="opacity-90 hover:opacity-100">Profile</Link>
-          {user ? (
-            <Button variant="nav" size="sm" onClick={() => { logout(); window.location.href = "/"; }}>
-              Logout
-            </Button>
-          ) : (
-            <Link to="/login"><Button variant="nav" size="sm">Login</Button></Link>
-          )}
-        </div>
-      </div>
-    </nav>
-  );
-};
+/** Trimmed reason must be at least this many characters before a volunteer can decline. */
+const MIN_DECLINE_REASON_LENGTH = 25;
 
 const FindRequests = () => {
   const { toast } = useToast();
@@ -80,6 +56,7 @@ const FindRequests = () => {
   const [ratingsMap, setRatingsMap] = useState<Record<string, { avg: number; count: number }>>({});
   const [tasksMap, setTasksMap] = useState<Record<string, number>>({});
   const [myAssignments, setMyAssignments] = useState<any[]>([]);
+  const [myLeavePeriods, setMyLeavePeriods] = useState<Array<{ startDayMs: number; endDayMs: number }>>([]);
   const [acceptingId, setAcceptingId] = useState<string | null>(null);
   const [decliningId, setDecliningId] = useState<string | null>(null);
   const [declineReason, setDeclineReason] = useState("");
@@ -176,6 +153,23 @@ const FindRequests = () => {
     return () => unsub();
   }, [email]);
 
+  useEffect(() => {
+    if (!email) {
+      setMyLeavePeriods([]);
+      return;
+    }
+    const q = query(collection(db, "volunteerLeave"), where("volunteerEmail", "==", email));
+    const unsub = onSnapshot(q, (snap) => {
+      const rows: Array<{ startDayMs: number; endDayMs: number }> = [];
+      snap.docs.forEach((d) => {
+        const p = parseLeaveDoc(d.id, d.data() as Record<string, unknown>);
+        if (p) rows.push({ startDayMs: p.startDayMs, endDayMs: p.endDayMs });
+      });
+      setMyLeavePeriods(rows);
+    });
+    return () => unsub();
+  }, [email]);
+
   const emailKey = email || "";
   const volunteer = volunteerProfile
     ? {
@@ -256,15 +250,21 @@ const FindRequests = () => {
     return combined.sort((a, b) => mult * ((a.sortKey ?? 0) - (b.sortKey ?? 0)));
   }, [preferredRequests, adminAssignedRequests, sortOrder]);
 
+  const isVolunteerOnLeave = (item: { serviceDateTS?: unknown }): boolean => {
+    const day = getAssignmentServiceDayMs({ serviceDateTS: item.serviceDateTS as number | { toMillis?: () => number } | undefined });
+    if (!day) return false;
+    return isDayCoveredByLeave(day, myLeavePeriods);
+  };
+
   const isVolunteerBusy = (
-    item: { serviceDateTS?: number; startTime24?: string; endTime24?: string; assignmentId?: string | null },
+    item: { serviceDateTS?: unknown; startTime24?: string; endTime24?: string; assignmentId?: string | null },
     excludeAssignmentId?: string | null
   ): boolean => {
     if (!item || !email) return false;
-    const day = Number(item.serviceDateTS);
+    const day = getAssignmentServiceDayMs({ serviceDateTS: item.serviceDateTS as number | { toMillis?: () => number } | undefined });
     const s = toMinutes(item.startTime24);
     const e = toMinutes(item.endTime24);
-    if (!Number.isFinite(day) || s == null || e == null) return false;
+    if (!day || s == null || e == null) return false;
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
     const dayMs = todayStart.getTime();
@@ -288,6 +288,14 @@ const FindRequests = () => {
       toast({ title: "Not eligible", description: "Only approved volunteers can accept requests.", variant: "destructive" });
       return;
     }
+    if (isVolunteerOnLeave(item)) {
+      toast({
+        title: "You are on leave",
+        description: "This date falls in your time off. Remove or adjust time off under Time off if you need to accept this request.",
+        variant: "destructive",
+      });
+      return;
+    }
     if (isVolunteerBusy(item, item.assignmentId)) {
       toast({ title: "Schedule conflict", description: "You have another assignment at that time.", variant: "destructive" });
       return;
@@ -301,6 +309,7 @@ const FindRequests = () => {
           acceptedByVolunteerAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         });
+        if (item.requestId) await deletePendingServiceRequestNotifications(db, item.requestId);
         toast({ title: "Request accepted", description: "It will appear in My Assignments." });
       } else {
         const req = item.request!;
@@ -387,6 +396,7 @@ const FindRequests = () => {
           });
           transaction.set(assignmentRef, assignmentPayload);
         });
+        await deletePendingServiceRequestNotifications(db, item.requestId);
         toast({ title: "Request accepted", description: "It will appear in My Assignments." });
       }
     } catch (e: any) {
@@ -396,11 +406,23 @@ const FindRequests = () => {
     }
   };
 
+  const trimmedDeclineReasonLen = declineReason.trim().length;
+  const declineReasonMeetsMin = trimmedDeclineReasonLen >= MIN_DECLINE_REASON_LENGTH;
+  const isDecliningCurrentTarget = Boolean(declineTarget && decliningId === declineTarget.id);
+
   const handleDecline = async () => {
     if (!declineTarget || !volunteer) return;
     const reason = declineReason.trim();
     if (!reason) {
       toast({ title: "Reason required", description: "Please provide a reason for declining.", variant: "destructive" });
+      return;
+    }
+    if (reason.length < MIN_DECLINE_REASON_LENGTH) {
+      toast({
+        title: "Reason too short",
+        description: `Please write at least ${MIN_DECLINE_REASON_LENGTH} characters (${MIN_DECLINE_REASON_LENGTH - reason.length} more) so the guardian and admin can understand.`,
+        variant: "destructive",
+      });
       return;
     }
     setDecliningId(declineTarget.id);
@@ -546,7 +568,9 @@ const FindRequests = () => {
         ) : (
           <div className="space-y-4">
             {allActionableRequests.map((item) => {
+              const onLeave = isVolunteerOnLeave(item);
               const busy = isVolunteerBusy(item, item.assignmentId);
+              const blockAccept = onLeave || busy;
               const isProcessing = acceptingId === item.id || decliningId === item.id;
               return (
                 <Card key={item.id} className="border bg-card">
@@ -582,7 +606,7 @@ const FindRequests = () => {
                       <Button
                         size="sm"
                         className="gap-2"
-                        disabled={busy || isProcessing}
+                        disabled={blockAccept || isProcessing}
                         onClick={() => handleAccept(item)}
                       >
                         {acceptingId === item.id ? (
@@ -590,7 +614,7 @@ const FindRequests = () => {
                         ) : (
                           <CheckCircle2 className="h-4 w-4" />
                         )}
-                        {busy ? "Conflicting schedule" : acceptingId === item.id ? "Accepting…" : "Accept"}
+                        {onLeave ? "On leave" : busy ? "Conflicting schedule" : acceptingId === item.id ? "Accepting…" : "Accept"}
                       </Button>
                       <Button
                         size="sm"
@@ -602,7 +626,10 @@ const FindRequests = () => {
                         <XCircle className="h-4 w-4" />
                         Decline
                       </Button>
-                      {busy && (
+                      {onLeave && (
+                        <Badge variant="secondary">You marked this day as time off</Badge>
+                      )}
+                      {!onLeave && busy && (
                         <Badge variant="secondary">You have another assignment at this time</Badge>
                       )}
                     </div>
@@ -618,7 +645,8 @@ const FindRequests = () => {
             <DialogHeader>
               <DialogTitle>Decline Request</DialogTitle>
               <DialogDescription>
-                Provide a reason for declining this request. It will be shared with the admin and guardian if applicable.
+                Provide a clear reason ({MIN_DECLINE_REASON_LENGTH} characters minimum). It will be shared with the admin
+                {declineTarget?.type === "guardian" ? " and guardian" : ""}.
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-3 text-sm">
@@ -627,16 +655,32 @@ const FindRequests = () => {
                 {declineTarget?.type === "guardian" ? " and the guardian who requested you" : ""}.
               </p>
               <textarea
-                className="w-full rounded-md border p-3 text-sm min-h-[100px]"
-                placeholder="e.g., I have a scheduling conflict, family emergency, etc."
+                className={cn(
+                  "w-full rounded-md border p-3 text-sm min-h-[100px]",
+                  trimmedDeclineReasonLen > 0 && !declineReasonMeetsMin && "border-amber-500/60 focus-visible:ring-amber-500/30"
+                )}
+                placeholder="e.g., I have a scheduling conflict that day, or another commitment during that time window."
                 value={declineReason}
                 onChange={(e) => setDeclineReason(e.target.value)}
                 rows={4}
+                aria-invalid={trimmedDeclineReasonLen > 0 && !declineReasonMeetsMin}
               />
+              <p className="text-xs text-muted-foreground">
+                {declineReasonMeetsMin ? (
+                  <span>{trimmedDeclineReasonLen} characters</span>
+                ) : (
+                  <span className="text-amber-700 dark:text-amber-500/90">
+                    {trimmedDeclineReasonLen} / {MIN_DECLINE_REASON_LENGTH} minimum
+                    {trimmedDeclineReasonLen > 0
+                      ? ` — ${MIN_DECLINE_REASON_LENGTH - trimmedDeclineReasonLen} more needed`
+                      : ""}
+                  </span>
+                )}
+              </p>
               <div className="flex justify-end gap-2">
                 <Button variant="outline" onClick={() => { setDeclineTarget(null); setDeclineReason(""); }}>Cancel</Button>
-                <Button variant="destructive" onClick={handleDecline} disabled={!declineReason.trim()}>
-                  {decliningId ? "Declining…" : "Decline"}
+                <Button variant="destructive" onClick={handleDecline} disabled={!declineReasonMeetsMin || isDecliningCurrentTarget}>
+                  {isDecliningCurrentTarget ? "Declining…" : "Decline"}
                 </Button>
               </div>
             </div>

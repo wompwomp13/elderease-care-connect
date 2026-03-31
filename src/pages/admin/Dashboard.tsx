@@ -3,15 +3,16 @@ import AdminLayout from "@/components/layout/AdminLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Users, ClipboardList, Star, Award, ChevronRight, ArrowUpRight, ArrowDownRight, User as UserIcon, Lightbulb, Download } from "lucide-react";
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line } from "recharts";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, ComposedChart } from "recharts";
 import { collection, getDocs, onSnapshot, query, where } from "firebase/firestore";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Settings2 } from "lucide-react";
 import { db } from "@/lib/firebase";
 import { cn } from "@/lib/utils";
-import { periodChange, predictNext, type ForecastMethod } from "@/lib/forecast";
-import { generateAdminReport } from "@/lib/report-utils";
+import { periodChange, buildForecastSeries, type ForecastMethod } from "@/lib/forecast";
+import { generateAdminReport, isInDateRange } from "@/lib/report-utils";
+import { ReportDateRangeDialog, type ReportDateRangeConfirm } from "@/components/reports/ReportDateRangeDialog";
 
 type ServicePeriodFilter = "weekly" | "monthly" | "yearly";
 type PendingRangeFilter = "from_2025" | "2025" | "2026";
@@ -29,6 +30,7 @@ const Dashboard = () => {
   const [forecastWindow, setForecastWindow] = useState<ForecastWindow>(6);
   const [forecastHorizon, setForecastHorizon] = useState<ForecastHorizon>(2);
   const [forecastMethod, setForecastMethod] = useState<ForecastMethod>("trend");
+  const [adminReportRangeOpen, setAdminReportRangeOpen] = useState(false);
 
   // Live collections
   const [requests, setRequests] = useState<any[] | null>(null);
@@ -142,12 +144,13 @@ const Dashboard = () => {
 
     const months: { month: string; cancelled: number; key: string }[] = [];
     const cur = new Date();
-    for (let i = 5; i >= 0; i--) {
+    for (let i = forecastWindow - 1; i >= 0; i--) {
       const d = new Date(cur.getFullYear(), cur.getMonth() - i, 1);
       const key = `${d.getFullYear()}-${d.getMonth()}`;
       months.push({ month: d.toLocaleString(undefined, { month: "short", year: "2-digit" }), cancelled: 0, key });
     }
-    cancelledInPeriod.forEach((r) => {
+    (requests || []).forEach((r) => {
+      if (r.status !== "cancelled") return;
       const ms = getCancelledMs(r);
       if (!ms) return;
       const d = new Date(ms);
@@ -155,6 +158,38 @@ const Dashboard = () => {
       const idx = months.findIndex((m) => m.key === key);
       if (idx >= 0) months[idx].cancelled += 1;
     });
+
+    const cancelValues = months.map((m) => m.cancelled);
+    const cancelBuilt = buildForecastSeries(cancelValues, forecastWindow, forecastHorizon, forecastMethod);
+    let cancellationChartData: { month: string; cancelled: number | null; cancelledFc: number | null }[];
+    if (cancelBuilt.insufficient || !cancelBuilt.forecast) {
+      cancellationChartData = months.map(({ month, cancelled }) => ({
+        month,
+        cancelled,
+        cancelledFc: null,
+      }));
+    } else {
+      const hist = months.map(({ month, cancelled }) => ({
+        month,
+        cancelled,
+        cancelledFc: null as number | null,
+      }));
+      const lastH = hist[hist.length - 1];
+      if (lastH) lastH.cancelledFc = lastH.cancelled;
+      const fcRows = cancelBuilt.forecast.map((val, i) => {
+        const d = new Date(cur.getFullYear(), cur.getMonth() + i + 1, 1);
+        return {
+          month: d.toLocaleString(undefined, { month: "short", year: "2-digit" }),
+          cancelled: null as number | null,
+          cancelledFc: Math.round(val),
+        };
+      });
+      cancellationChartData = [...hist, ...fcRows];
+    }
+    const cancellationForecastIncreasing =
+      !cancelBuilt.insufficient &&
+      cancelBuilt.forecast != null &&
+      cancelBuilt.forecast[0] > cancelBuilt.lastActual;
 
     const topReason = reasonData[0];
     const insights: string[] = [];
@@ -165,17 +200,21 @@ const Dashboard = () => {
     if (topReason && topReason.name === "Entered wrong information") insights.push(`Data entry errors — consider simplifying the form or adding validation.`);
     if (totalCancelled === 0 && totalInPeriod > 0) insights.push(`No cancellations in this period — retention looks strong.`);
     if (totalCancelled > 0 && insights.length === 0) insights.push(`Review cancellation patterns to identify improvement opportunities.`);
+    if (cancellationForecastIncreasing) {
+      insights.push(`Projected cancellations are increasing.`);
+    }
 
     return {
       total: cancelledInPeriod.length,
       rate,
       totalInPeriod,
       reasonData,
-      chartData: months.map(({ month, cancelled }) => ({ month, cancelled })),
+      chartData: cancellationChartData,
+      cancellationForecastInsufficient: cancelBuilt.insufficient,
       topReason,
       insights,
     };
-  }, [requests, cancelPeriodFilter]);
+  }, [requests, cancelPeriodFilter, forecastWindow, forecastHorizon, forecastMethod]);
 
   const now = new Date();
   const weekAgoMs = now.getTime() - 6 * 24 * 60 * 60 * 1000;
@@ -334,14 +373,16 @@ const Dashboard = () => {
       if (idx >= 0) months[idx].services += 1;
     });
     const values = months.map((m) => m.services);
-    const forecasted = predictNext(values, forecastHorizon, forecastMethod);
-    const lastActual = values[values.length - 1] ?? 0;
-    const historical = months.map(({ month, services }, idx) => ({
+    const built = buildForecastSeries(values, forecastWindow, forecastHorizon, forecastMethod);
+    const historical = months.map(({ month, services }) => ({
       month,
       services,
-      forecast: idx === months.length - 1 && forecasted.length > 0 ? lastActual : null as number | null,
+      forecast: null as number | null,
     }));
-    const nextMonths = forecasted.map((val, i) => {
+    if (built.insufficient || !built.forecast) return historical;
+    const lastHist = historical[historical.length - 1];
+    if (lastHist) lastHist.forecast = lastHist.services;
+    const nextMonths = built.forecast.map((val, i) => {
       const d = new Date(cur.getFullYear(), cur.getMonth() + i + 1, 1);
       return {
         month: d.toLocaleString(undefined, { month: "short" }),
@@ -478,19 +519,78 @@ const Dashboard = () => {
       if (idx >= 0) byEmailByBucket[email][idx] += 1;
     });
 
-    const trendChartData = chartBuckets.map((b, idx) => {
-      const row: Record<string, string | number> = { label: b.label };
+    const trendChartDataBase = chartBuckets.map((b, idx) => {
+      const row: Record<string, string | number | null> = { label: b.label };
       topVolunteers.slice(0, 3).forEach((v) => {
         row[`v_${v.id}`] = byEmailByBucket[v.emailKey]?.[idx] ?? 0;
+        row[`v_${v.id}_fc`] = null;
       });
       return row;
     });
+
+    const top3 = topVolunteers.slice(0, 3);
+    const forecastByVolunteerId: Record<string, ReturnType<typeof buildForecastSeries>> = {};
+    top3.forEach((v) => {
+      const fullHist = byEmailByBucket[v.emailKey] || [];
+      forecastByVolunteerId[v.id] = buildForecastSeries(
+        fullHist,
+        forecastWindow,
+        forecastHorizon,
+        forecastMethod
+      );
+    });
+    let topThreeForecastInsufficient = false;
+    let topThreeForecastSum = 0;
+    top3.forEach((v) => {
+      const b = forecastByVolunteerId[v.id];
+      if (b.insufficient || !b.forecast) topThreeForecastInsufficient = true;
+      else topThreeForecastSum += Math.round(b.forecast[0]);
+    });
+
+    const lastBucket = chartBuckets[chartBuckets.length - 1];
+    const forecastRows: Record<string, string | number | null>[] = [];
+    for (let step = 0; step < forecastHorizon; step++) {
+      let label: string;
+      if (volunteerPeriodFilter === "weekly") {
+        let t = lastBucket.endMs + step * 7 * 24 * 60 * 60 * 1000;
+        const ws = new Date(t);
+        label = ws.toLocaleString(undefined, { month: "short", day: "numeric" });
+      } else if (volunteerPeriodFilter === "yearly") {
+        const y0 = new Date(lastBucket.startMs).getFullYear();
+        label = String(y0 + step + 1);
+      } else {
+        const d = new Date(lastBucket.startMs);
+        const nd = new Date(d.getFullYear(), d.getMonth() + step + 1, 1);
+        label = nd.toLocaleString(undefined, { month: "short", year: "2-digit" });
+      }
+      const row: Record<string, string | number | null> = { label };
+      top3.forEach((v) => {
+        row[`v_${v.id}`] = null;
+        const b = forecastByVolunteerId[v.id];
+        const p = b.forecast?.[step];
+        row[`v_${v.id}_fc`] =
+          !b.insufficient && p != null ? Math.round(p) : null;
+      });
+      forecastRows.push(row);
+    }
+
+    const lastBase = trendChartDataBase[trendChartDataBase.length - 1];
+    if (lastBase) {
+      top3.forEach((v) => {
+        const b = forecastByVolunteerId[v.id];
+        if (!b.insufficient && b.forecast) {
+          lastBase[`v_${v.id}_fc`] = lastBase[`v_${v.id}`];
+        }
+      });
+    }
+
+    const trendChartData = [...trendChartDataBase, ...forecastRows];
 
     const avgPerMonth = topVolunteers.map((v) => {
       const hist = byEmailByBucket[v.emailKey] || [];
       const sum = hist.reduce((a, b) => a + b, 0);
       const bucketsActive = hist.filter((x) => x > 0).length || 1;
-      return { ...v, avgMonthly: Math.round((sum / Math.max(bucketsActive, 3)) * 10) / 10, forecast: Math.round((sum / Math.max(bucketsActive, 3)) * 10) / 10 };
+      return { ...v, avgMonthly: Math.round((sum / Math.max(bucketsActive, 3)) * 10) / 10 };
     });
 
     const chartTitle = volunteerPeriodFilter === "weekly"
@@ -506,11 +606,13 @@ const Dashboard = () => {
       totalInPeriod,
       trendChartData,
       avgPerMonth,
+      topThreeForecastSum,
+      topThreeForecastInsufficient,
       periodLabel: volunteerPeriodFilter === "weekly" ? "7 days" : volunteerPeriodFilter === "monthly" ? "30 days" : "12 months",
       chartTitle,
       chartXLabel,
     };
-  }, [approvedVolunteers, ratingsMap, tasksMap, assignments, volunteerPeriodFilter]);
+  }, [approvedVolunteers, ratingsMap, tasksMap, assignments, volunteerPeriodFilter, forecastWindow, forecastHorizon, forecastMethod]);
 
   // Normalize service names to canonical ids and labels
   const toServiceId = (nameOrId: string): string => {
@@ -605,20 +707,29 @@ const Dashboard = () => {
         if (byService[id]) byService[id][idx] += 1;
       });
     });
-    const forecast: { name: string; current: number; forecast: number }[] = [];
+    const forecast: { name: string; current: number; forecast: number; insufficient: boolean }[] = [];
     serviceIds.forEach((id) => {
       const vals = byService[id];
       const total = vals.reduce((a, b) => a + b, 0);
       if (total === 0) return;
-      const pred = predictNext(vals, forecastHorizon, forecastMethod);
+      const built = buildForecastSeries(vals, forecastWindow, forecastHorizon, forecastMethod);
       forecast.push({
         name: toDisplayName(id),
         current: vals[vals.length - 1] ?? 0,
-        forecast: Math.round((pred[0] ?? 0)),
+        forecast: built.insufficient || !built.forecast ? 0 : Math.round(built.forecast[0]),
+        insufficient: built.insufficient,
       });
     });
     return forecast.sort((a, b) => b.forecast - a.forecast);
   }, [requests, forecastWindow, forecastHorizon, forecastMethod]);
+
+  const requestVolumeForecastSummary = useMemo(() => {
+    const ok = serviceDemandForecast.filter((s) => !s.insufficient);
+    const totalNext = ok.reduce((acc, s) => acc + s.forecast, 0);
+    const anyRow = serviceDemandForecast.length > 0;
+    const allInsufficient = anyRow && ok.length === 0;
+    return { totalNext, top3: ok.slice(0, 3), anyRow, allInsufficient };
+  }, [serviceDemandForecast]);
 
   // Volunteer capacity forecast: projected completions vs forecasted demand
   const capacityForecast = useMemo(() => {
@@ -645,16 +756,20 @@ const Dashboard = () => {
       const idx = months.findIndex((m) => m.key === `${d.getFullYear()}-${d.getMonth()}`);
       if (idx >= 0) requestsByMonth[idx] += 1;
     });
-    const capacityPred = predictNext(completedByMonth, forecastHorizon, forecastMethod);
-    const demandPred = predictNext(requestsByMonth, forecastHorizon, forecastMethod);
-    const projectedCapacity = Math.round(capacityPred[0] ?? 0);
-    const forecastedDemand = Math.round(demandPred[0] ?? 0);
+    const capBuilt = buildForecastSeries(completedByMonth, forecastWindow, forecastHorizon, forecastMethod);
+    const demBuilt = buildForecastSeries(requestsByMonth, forecastWindow, forecastHorizon, forecastMethod);
+    const insufficient = capBuilt.insufficient || demBuilt.insufficient;
+    const projectedCapacity =
+      insufficient || !capBuilt.forecast ? 0 : Math.round(capBuilt.forecast[0]);
+    const forecastedDemand =
+      insufficient || !demBuilt.forecast ? 0 : Math.round(demBuilt.forecast[0]);
     const gap = forecastedDemand - projectedCapacity;
     return {
       projectedCapacity,
       forecastedDemand,
       gap,
-      status: gap > 2 ? "shortage" : gap < -2 ? "surplus" : "balanced",
+      status: insufficient ? "balanced" : gap > 2 ? "shortage" : gap < -2 ? "surplus" : "balanced",
+      insufficient,
     };
   }, [assignments, requests, forecastWindow, forecastHorizon, forecastMethod]);
 
@@ -685,11 +800,85 @@ const Dashboard = () => {
     return entries.map(([id, n]) => ({ name: toDisplayName(id), requests: n, percentage: Math.round((n / total) * 1000) / 10 }));
   }, [requests, servicePeriodFilter]);
 
-
-  
+  const runAdminReportDownload = async (range: ReportDateRangeConfirm) => {
+    const completedAll = (assignments || []).filter((a) => a.status === "completed" && a.guardianConfirmed);
+    const completedFiltered = completedAll.filter((a) => isInDateRange(a.serviceDateTS, range.startMs, range.endMs));
+    const reqFiltered = (requests || []).filter((r) => isInDateRange(r.createdAt, range.startMs, range.endMs));
+    const qv = query(collection(db, "pendingVolunteers"), where("status", "in", ["approved"]));
+    const snap = await getDocs(qv);
+    const fromPending = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })).filter((v) => (v.status || "").toLowerCase() === "approved");
+    const seenEmails = new Set<string>();
+    const allVolunteers: Array<{ name: string; email: string; rating: number | null; totalServices: number; specialty: string }> = [];
+    for (const v of fromPending) {
+      const emailKey = (v.email || "").toLowerCase();
+      if (!emailKey || seenEmails.has(emailKey)) continue;
+      seenEmails.add(emailKey);
+      const r = ratingsMap[emailKey];
+      const avg = r ? r.sum / r.count : null;
+      allVolunteers.push({
+        name: v.fullName || v.name || v.email || "Volunteer",
+        email: emailKey,
+        rating: avg,
+        totalServices: tasksMap[emailKey] || 0,
+        specialty: Array.isArray(v.services) ? v.services.slice(0, 2).join(" & ") : (v.services || "Care Services"),
+      });
+    }
+    for (const a of completedAll) {
+      const emailKey = (a.volunteerEmail || "").toLowerCase();
+      if (!emailKey || seenEmails.has(emailKey)) continue;
+      seenEmails.add(emailKey);
+      const r = ratingsMap[emailKey];
+      const avg = r ? r.sum / r.count : null;
+      allVolunteers.push({
+        name: emailKey,
+        email: emailKey,
+        rating: avg,
+        totalServices: tasksMap[emailKey] || 0,
+        specialty: "—",
+      });
+    }
+    allVolunteers.sort((a, b) => a.name.localeCompare(b.name));
+    generateAdminReport({
+      dateRangeLabel: range.label,
+      requestsInPeriodCount: reqFiltered.length,
+      completedInPeriodCount: completedFiltered.length,
+      totalRequests,
+      pendingRequests,
+      activeVolunteers,
+      completedThisWeek,
+      cancellationRate: cancellationAnalytics.rate,
+      capacityForecast,
+      forecastMethod,
+      serviceDemandForecast,
+      cancellationReasons: cancellationAnalytics.reasonData,
+      monthlyTrend,
+      topServices,
+      allVolunteers,
+      requests: reqFiltered,
+      completedAssignments: completedFiltered.map((a) => ({
+        assignmentId: a.id,
+        serviceDateTS: a.serviceDateTS,
+        volunteerEmail: a.volunteerEmail,
+        volunteerName: a.volunteerName,
+        elderName: a.elderName,
+        services: a.services,
+        servicesStr: Array.isArray(a.services) ? a.services.join(", ") : a.services,
+        startTimeText: a.startTimeText,
+        endTimeText: a.endTimeText,
+        receipt: a.receipt ?? null,
+      })),
+    });
+  };
 
   return (
     <AdminLayout>
+      <ReportDateRangeDialog
+        open={adminReportRangeOpen}
+        onOpenChange={setAdminReportRangeOpen}
+        onConfirm={(range) => void runAdminReportDownload(range)}
+        title="Download admin report"
+        description="Charts and summary figures match the live dashboard. The request log is filtered by when each request was submitted; completed history uses the service date."
+      />
       <div className="space-y-6">
         <div>
           <h1 className="text-3xl font-bold mb-1">Dashboard Overview</h1>
@@ -736,124 +925,87 @@ const Dashboard = () => {
             <TabsTrigger value="operations">Operations</TabsTrigger>
           </TabsList>
 
-          <TabsContent value="overview" className="space-y-6 mt-0">
-        {/* Customize forecast + Download Report - above graphs */}
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <p className="text-sm text-muted-foreground">Forecast uses last {forecastWindow} months · {forecastHorizon} month{forecastHorizon > 1 ? "s" : ""} ahead · <span className="font-bold text-foreground uppercase">{forecastMethod}</span></p>
-          <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" className="gap-1.5" onClick={async () => {
-              const completed = (assignments || []).filter((a) => a.status === "completed" && a.guardianConfirmed);
-              const qv = query(collection(db, "pendingVolunteers"), where("status", "in", ["approved"]));
-              const snap = await getDocs(qv);
-              const fromPending = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })).filter((v) => (v.status || "").toLowerCase() === "approved");
-              const seenEmails = new Set<string>();
-              const allVolunteers: Array<{ name: string; email: string; rating: number | null; totalServices: number; specialty: string }> = [];
-              for (const v of fromPending) {
-                const emailKey = (v.email || "").toLowerCase();
-                if (!emailKey || seenEmails.has(emailKey)) continue;
-                seenEmails.add(emailKey);
-                const r = ratingsMap[emailKey];
-                const avg = r ? r.sum / r.count : null;
-                allVolunteers.push({
-                  name: v.fullName || v.name || v.email || "Volunteer",
-                  email: emailKey,
-                  rating: avg,
-                  totalServices: tasksMap[emailKey] || 0,
-                  specialty: Array.isArray(v.services) ? v.services.slice(0, 2).join(" & ") : (v.services || "Care Services"),
-                });
-              }
-              for (const a of completed) {
-                const emailKey = (a.volunteerEmail || "").toLowerCase();
-                if (!emailKey || seenEmails.has(emailKey)) continue;
-                seenEmails.add(emailKey);
-                const r = ratingsMap[emailKey];
-                const avg = r ? r.sum / r.count : null;
-                allVolunteers.push({
-                  name: emailKey,
-                  email: emailKey,
-                  rating: avg,
-                  totalServices: tasksMap[emailKey] || 0,
-                  specialty: "—",
-                });
-              }
-              allVolunteers.sort((a, b) => a.name.localeCompare(b.name));
-              generateAdminReport({
-                totalRequests,
-                pendingRequests,
-                activeVolunteers,
-                completedThisWeek,
-                cancellationRate: cancellationAnalytics.rate,
-                capacityForecast,
-                forecastMethod,
-                serviceDemandForecast,
-                cancellationReasons: cancellationAnalytics.reasonData,
-                monthlyTrend,
-                topServices,
-                allVolunteers,
-                requests: requests || [],
-                completedAssignments: completed.map((a) => ({
-                  serviceDateTS: a.serviceDateTS,
-                  volunteerEmail: a.volunteerEmail,
-                  elderName: a.elderName,
-                  services: a.services,
-                  servicesStr: Array.isArray(a.services) ? a.services.join(", ") : a.services,
-                  startTimeText: a.startTimeText,
-                  endTimeText: a.endTimeText,
-                })),
-              });
-            }}>
-              <Download className="h-3.5 w-3.5" />
-              Download report
-            </Button>
-            <Popover>
-            <PopoverTrigger asChild>
-              <Button variant="outline" size="sm" className="gap-1.5">
-                <Settings2 className="h-3.5 w-3.5" />
-                Customize forecast
+          <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+            <p className="text-sm text-muted-foreground">
+              Forecast uses last {forecastWindow} months · {forecastHorizon} month{forecastHorizon > 1 ? "s" : ""} ahead ·{" "}
+              <span className="font-bold text-foreground uppercase">{forecastMethod}</span>
+            </p>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setAdminReportRangeOpen(true)}>
+                <Download className="h-3.5 w-3.5" />
+                Download report
               </Button>
-            </PopoverTrigger>
-            <PopoverContent className="w-72" align="end">
-              <div className="space-y-4">
-                <h4 className="font-medium text-sm">Forecast settings</h4>
-                <div className="flex flex-col gap-2">
-                  <span className="text-xs font-medium text-muted-foreground">History</span>
-                  <div className="flex rounded-md border bg-muted/50 p-0.5">
-                    {([3, 6, 12] as const).map((n) => (
-                      <button key={n} type="button" onClick={() => setForecastWindow(n)}
-                        className={cn("flex-1 px-2 py-1.5 text-sm font-medium rounded", forecastWindow === n ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground")}>
-                        {n}mo
-                      </button>
-                    ))}
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button variant="outline" size="sm" className="gap-1.5">
+                    <Settings2 className="h-3.5 w-3.5" />
+                    Customize forecast
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-72" align="end">
+                  <div className="space-y-4">
+                    <h4 className="font-medium text-sm">Forecast settings</h4>
+                    <div className="flex flex-col gap-2">
+                      <span className="text-xs font-medium text-muted-foreground">History</span>
+                      <div className="flex rounded-md border bg-muted/50 p-0.5">
+                        {([3, 6, 12] as const).map((n) => (
+                          <button
+                            key={n}
+                            type="button"
+                            onClick={() => setForecastWindow(n)}
+                            className={cn(
+                              "flex-1 px-2 py-1.5 text-sm font-medium rounded",
+                              forecastWindow === n ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground"
+                            )}
+                          >
+                            {n}mo
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="flex flex-col gap-2">
+                      <span className="text-xs font-medium text-muted-foreground">Horizon</span>
+                      <div className="flex rounded-md border bg-muted/50 p-0.5">
+                        {([1, 2, 3] as const).map((n) => (
+                          <button
+                            key={n}
+                            type="button"
+                            onClick={() => setForecastHorizon(n)}
+                            className={cn(
+                              "flex-1 px-2 py-1.5 text-sm font-medium rounded",
+                              forecastHorizon === n ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground"
+                            )}
+                          >
+                            {n} mo
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="flex flex-col gap-2">
+                      <span className="text-xs font-medium text-muted-foreground">Method</span>
+                      <div className="flex rounded-md border bg-muted/50 p-0.5">
+                        {(["trend", "average"] as const).map((m) => (
+                          <button
+                            key={m}
+                            type="button"
+                            onClick={() => setForecastMethod(m)}
+                            className={cn(
+                              "flex-1 px-2 py-1.5 text-sm font-medium rounded capitalize",
+                              forecastMethod === m ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground"
+                            )}
+                          >
+                            {m}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                   </div>
-                </div>
-                <div className="flex flex-col gap-2">
-                  <span className="text-xs font-medium text-muted-foreground">Horizon</span>
-                  <div className="flex rounded-md border bg-muted/50 p-0.5">
-                    {([1, 2, 3] as const).map((n) => (
-                      <button key={n} type="button" onClick={() => setForecastHorizon(n)}
-                        className={cn("flex-1 px-2 py-1.5 text-sm font-medium rounded", forecastHorizon === n ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground")}>
-                        {n} mo
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div className="flex flex-col gap-2">
-                  <span className="text-xs font-medium text-muted-foreground">Method</span>
-                  <div className="flex rounded-md border bg-muted/50 p-0.5">
-                    {(["trend", "average"] as const).map((m) => (
-                      <button key={m} type="button" onClick={() => setForecastMethod(m)}
-                        className={cn("flex-1 px-2 py-1.5 text-sm font-medium rounded capitalize", forecastMethod === m ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground")}>
-                        {m}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </PopoverContent>
-            </Popover>
+                </PopoverContent>
+              </Popover>
+            </div>
           </div>
-        </div>
 
+          <TabsContent value="overview" className="space-y-6 mt-0">
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <Card className="shadow-lg border-0">
             <CardHeader>
@@ -952,6 +1104,11 @@ const Dashboard = () => {
                 <span className="flex items-center gap-1.5"><span className="inline-block w-4 border-b-2 border-primary" />Actual</span>
                 <span className="flex items-center gap-1.5"><span className="inline-block w-4 border-b-2 border-primary border-dashed" />Forecast</span>
               </div>
+              {!monthlyTrend.some((r) => r.forecast != null) && (
+                <p className="text-xs text-muted-foreground mt-2">
+                  Insufficient data to extend forecast (need at least 2 months with completed services).
+                </p>
+              )}
             </CardContent>
           </Card>
         </div>
@@ -960,9 +1117,7 @@ const Dashboard = () => {
         <Card className="shadow-lg border-0">
           <CardHeader>
             <CardTitle className="text-lg">Forecast</CardTitle>
-            <p className="text-sm text-muted-foreground">
-              Based on last {forecastWindow} months · {forecastHorizon} month{forecastHorizon > 1 ? "s" : ""} ahead · <span className="font-bold text-foreground uppercase">{forecastMethod}</span>
-            </p>
+            <p className="text-sm text-muted-foreground">Uses the forecast controls and method shown above.</p>
           </CardHeader>
           <CardContent className="space-y-6">
             <div className="grid sm:grid-cols-2 gap-6">
@@ -979,7 +1134,13 @@ const Dashboard = () => {
                       <div key={s.name} className="flex justify-between items-center text-sm">
                         <span className="font-medium">{s.name}</span>
                         <span className="text-muted-foreground">
-                          ~{s.forecast} <span className="text-xs">req/mo</span>
+                          {s.insufficient ? (
+                            <span className="text-xs">Insufficient data</span>
+                          ) : (
+                            <>
+                              ~{s.forecast} <span className="text-xs">next step</span>
+                            </>
+                          )}
                         </span>
                       </div>
                     ))}
@@ -991,34 +1152,38 @@ const Dashboard = () => {
                 <p className="text-xs text-muted-foreground mb-3">
                   Compares how many services volunteers can complete (capacity) to how many new requests are expected (demand). When demand exceeds capacity, the gap is how many requests may go unfulfilled without action.
                 </p>
-                <div className="space-y-3">
-                  <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">Projected capacity</span>
-                    <span className="font-bold">{capacityForecast.projectedCapacity}</span>
+                {capacityForecast.insufficient ? (
+                  <p className="text-sm text-muted-foreground">Insufficient data to forecast (need at least 2 months with activity in each series).</p>
+                ) : (
+                  <div className="space-y-3">
+                    <div className="flex justify-between text-sm">
+                      <span className="text-muted-foreground">Projected capacity</span>
+                      <span className="font-bold">{capacityForecast.projectedCapacity}</span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-muted-foreground">Forecasted demand</span>
+                      <span className="font-bold">{capacityForecast.forecastedDemand}</span>
+                    </div>
+                    <div
+                      className={cn(
+                        "rounded-lg px-3 py-2 text-sm font-medium",
+                        capacityForecast.status === "shortage" && "bg-amber-50 text-amber-800 dark:bg-amber-500/10 dark:text-amber-400",
+                        capacityForecast.status === "surplus" && "bg-emerald-50 text-emerald-800 dark:bg-emerald-500/10 dark:text-emerald-400",
+                        capacityForecast.status === "balanced" && "bg-muted/50 text-muted-foreground"
+                      )}
+                    >
+                      {capacityForecast.status === "shortage" && (
+                        <>We expect ~{capacityForecast.gap} more requests than volunteers can handle. Consider recruiting more volunteers or planning volunteer availability in advance.</>
+                      )}
+                      {capacityForecast.status === "surplus" && (
+                        <>Volunteers can handle ~{Math.abs(capacityForecast.gap)} more requests than expected — capacity exceeds demand.</>
+                      )}
+                      {capacityForecast.status === "balanced" && (
+                        <>Capacity and demand are in balance — expected completions roughly match expected requests.</>
+                      )}
+                    </div>
                   </div>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">Forecasted demand</span>
-                    <span className="font-bold">{capacityForecast.forecastedDemand}</span>
-                  </div>
-                  <div
-                    className={cn(
-                      "rounded-lg px-3 py-2 text-sm font-medium",
-                      capacityForecast.status === "shortage" && "bg-amber-50 text-amber-800 dark:bg-amber-500/10 dark:text-amber-400",
-                      capacityForecast.status === "surplus" && "bg-emerald-50 text-emerald-800 dark:bg-emerald-500/10 dark:text-emerald-400",
-                      capacityForecast.status === "balanced" && "bg-muted/50 text-muted-foreground"
-                    )}
-                  >
-                    {capacityForecast.status === "shortage" && (
-                      <>We expect ~{capacityForecast.gap} more requests than volunteers can handle. Consider recruiting more volunteers or planning volunteer availability in advance.</>
-                    )}
-                    {capacityForecast.status === "surplus" && (
-                      <>Volunteers can handle ~{Math.abs(capacityForecast.gap)} more requests than expected — capacity exceeds demand.</>
-                    )}
-                    {capacityForecast.status === "balanced" && (
-                      <>Capacity and demand are in balance — expected completions roughly match expected requests.</>
-                    )}
-                  </div>
-                </div>
+                )}
               </div>
             </div>
             <div className="rounded-lg border border-primary/20 bg-primary/5 p-4 space-y-3">
@@ -1046,6 +1211,44 @@ const Dashboard = () => {
           </TabsContent>
 
           <TabsContent value="requests" className="space-y-6 mt-0">
+        <Card className="shadow-lg border-0">
+          <CardHeader>
+            <CardTitle className="text-lg">Request volume forecast (next period)</CardTitle>
+            <p className="text-sm text-muted-foreground">
+              First-step forecast per service (same pipeline as Overview). Top services by predicted next-month volume.
+            </p>
+          </CardHeader>
+          <CardContent>
+            {!requestVolumeForecastSummary.anyRow ? (
+              <p className="text-sm text-muted-foreground">No service request history to forecast.</p>
+            ) : requestVolumeForecastSummary.allInsufficient ? (
+              <p className="text-sm text-muted-foreground">
+                Insufficient data to forecast (need at least 2 non-zero months per service in the selected history window).
+              </p>
+            ) : (
+              <div className="space-y-4">
+                <div className="rounded-xl border p-4 bg-muted/40">
+                  <div className="text-xs text-muted-foreground mb-1">Total predicted requests (next step, summed)</div>
+                  <div className="text-2xl font-bold">~{requestVolumeForecastSummary.totalNext}</div>
+                </div>
+                {requestVolumeForecastSummary.top3.length > 0 && (
+                  <div>
+                    <div className="text-sm font-medium mb-2">Top 3 services</div>
+                    <ul className="space-y-2">
+                      {requestVolumeForecastSummary.top3.map((s) => (
+                        <li key={s.name} className="flex justify-between text-sm">
+                          <span>{s.name}</span>
+                          <span className="text-muted-foreground">~{s.forecast}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
         {/* Range Pending */}
         <Card className="shadow-lg border-0">
           <CardHeader className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
@@ -1228,11 +1431,11 @@ const Dashboard = () => {
               <div className="rounded-xl border p-4 bg-muted/40">
                 <div className="text-xs text-muted-foreground mb-1">Forecast (next period)</div>
                 <div className="text-2xl font-bold">
-                  {volunteerAnalytics.avgPerMonth.length > 0
-                    ? Math.round(volunteerAnalytics.avgPerMonth.slice(0, 3).reduce((s, v) => s + v.forecast, 0))
-                    : "—"}
+                  {volunteerAnalytics.topThreeForecastInsufficient
+                    ? "—"
+                    : volunteerAnalytics.topThreeForecastSum}
                 </div>
-                <p className="text-xs text-muted-foreground mt-1">est. services from top 3</p>
+                <p className="text-xs text-muted-foreground mt-1">est. services from top 3 · projects next period from recent activity</p>
               </div>
             </div>
 
@@ -1258,11 +1461,11 @@ const Dashboard = () => {
                       of all services in the last {volunteerAnalytics.periodLabel}.
                     </li>
                   )}
-                  {volunteerAnalytics.avgPerMonth.length > 0 && (
+                  {!volunteerAnalytics.topThreeForecastInsufficient && volunteerAnalytics.topVolunteers.length > 0 && (
                     <li>
                       • Based on recent activity, top 3 are forecast to complete ~
                       <span className="font-medium text-foreground">
-                        {Math.round(volunteerAnalytics.avgPerMonth.slice(0, 3).reduce((s, v) => s + v.forecast, 0))}
+                        {volunteerAnalytics.topThreeForecastSum}
                       </span>{" "}
                       services in the next period.
                     </li>
@@ -1279,7 +1482,8 @@ const Dashboard = () => {
 
             {volunteerAnalytics.trendChartData.length > 0 && (
               <div className="rounded-xl border p-4 bg-muted/30">
-                <h4 className="text-sm font-medium mb-4">{volunteerAnalytics.chartTitle}</h4>
+                <h4 className="text-sm font-medium mb-1">{volunteerAnalytics.chartTitle}</h4>
+                <p className="text-xs text-muted-foreground mb-4">Solid = actual; dashed = forecast. Projects next period based on recent activity.</p>
                 <ResponsiveContainer width="100%" height={200}>
                   <LineChart data={volunteerAnalytics.trendChartData} margin={{ top: 40, right: 10, left: 60, bottom: 25 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
@@ -1313,6 +1517,23 @@ const Dashboard = () => {
                           strokeWidth={2}
                           dot={{ r: 3 }}
                           name={v.name}
+                          connectNulls={false}
+                        />
+                      );
+                    })}
+                    {volunteerAnalytics.topVolunteers.slice(0, 3).map((v, i) => {
+                      const colors = ["hsl(var(--primary))", "hsl(var(--primary-dark))", "hsl(198 63% 69%)"];
+                      return (
+                        <Line
+                          key={`${v.id}-fc`}
+                          type="monotone"
+                          dataKey={`v_${v.id}_fc`}
+                          stroke={colors[i]}
+                          strokeWidth={2}
+                          strokeDasharray="6 4"
+                          dot={{ r: 2 }}
+                          name={`${v.name} (forecast)`}
+                          connectNulls
                         />
                       );
                     })}
@@ -1531,20 +1752,24 @@ const Dashboard = () => {
                 )}
               </div>
 
-              {/* Monthly trend chart */}
+              {/* Monthly trend + forecast */}
               <div className="rounded-xl border p-4 bg-muted/30">
-                <h4 className="text-sm font-medium mb-4">Cancellations over time (last 6 months)</h4>
-                <ResponsiveContainer width="100%" height={180}>
-                  <BarChart data={cancellationAnalytics.chartData} margin={{ top: 40, right: 10, left: 60, bottom: 25 }}>
+                <h4 className="text-sm font-medium mb-1">Cancellations over time</h4>
+                <p className="text-xs text-muted-foreground mb-3">
+                  Last {forecastWindow} months of actuals
+                  {cancellationAnalytics.cancellationForecastInsufficient ? "" : " · dashed = forecast"}.
+                </p>
+                <ResponsiveContainer width="100%" height={200}>
+                  <ComposedChart data={cancellationAnalytics.chartData} margin={{ top: 16, right: 10, left: 60, bottom: 25 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                    <XAxis 
-                      dataKey="month" 
-                      stroke="hsl(var(--muted-foreground))" 
+                    <XAxis
+                      dataKey="month"
+                      stroke="hsl(var(--muted-foreground))"
                       fontSize={11}
                       label={{ value: "Month", position: "insideBottom", offset: -5 }}
                     />
-                    <YAxis 
-                      stroke="hsl(var(--muted-foreground))" 
+                    <YAxis
+                      stroke="hsl(var(--muted-foreground))"
                       fontSize={11}
                       label={{ value: "Cancellations", angle: -90, position: "insideLeft", dy: 50 }}
                     />
@@ -1555,11 +1780,40 @@ const Dashboard = () => {
                         borderRadius: "8px",
                       }}
                       labelFormatter={(label) => `Month: ${label}`}
-                      formatter={(value: number) => [value, "Cancellations"]}
+                      formatter={(value: number | undefined, name: string) =>
+                        value == null ? ["—", name] : [value, name === "cancelled" ? "Actual" : "Forecast"]
+                      }
                     />
-                    <Bar dataKey="cancelled" fill="hsl(var(--destructive))" name="Cancellations" radius={[4, 4, 0, 0]} />
-                  </BarChart>
+                    <Bar dataKey="cancelled" name="Actual" fill="hsl(var(--destructive))" radius={[4, 4, 0, 0]} />
+                    <Line
+                      type="monotone"
+                      dataKey="cancelledFc"
+                      name="Forecast"
+                      stroke="hsl(var(--destructive))"
+                      strokeWidth={2}
+                      strokeDasharray="6 4"
+                      dot={{ r: 3, fill: "hsl(var(--destructive))" }}
+                      connectNulls={false}
+                    />
+                  </ComposedChart>
                 </ResponsiveContainer>
+                {cancellationAnalytics.cancellationForecastInsufficient && (
+                  <p className="text-xs text-muted-foreground mt-2">
+                    Insufficient data to extend forecast (need at least 2 months with cancellations in this window).
+                  </p>
+                )}
+                {!cancellationAnalytics.cancellationForecastInsufficient && (
+                  <div className="flex justify-end gap-4 mt-2 text-xs text-muted-foreground">
+                    <span className="flex items-center gap-1.5">
+                      <span className="inline-block w-3 h-3 rounded-sm bg-[hsl(var(--destructive))]" />
+                      Actual
+                    </span>
+                    <span className="flex items-center gap-1.5">
+                      <span className="inline-block w-4 border-b-2 border-[hsl(var(--destructive))] border-dashed" />
+                      Forecast
+                    </span>
+                  </div>
+                )}
               </div>
             </div>
 

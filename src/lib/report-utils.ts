@@ -5,12 +5,204 @@ const PAGE_WIDTH = 210;
 const MARGIN = 20;
 const LINE_HEIGHT = 7;
 const SECTION_GAP = 12;
+const PAGE_BREAK_Y = 240;
+const RECEIPT_SECTION_GAP = 6;
+
+function formatReceiptShortDate(ts: number | { toMillis?: () => number } | undefined): string {
+  if (!ts) return "—";
+  const ms = typeof ts === "number" ? ts : ts?.toMillis?.();
+  if (!ms) return "—";
+  return new Date(ms).toLocaleDateString("en-PH", { year: "numeric", month: "short", day: "numeric" });
+}
+
+function truncateReceiptLabel(text: string, maxLen: number): string {
+  const t = text.trim();
+  if (t.length <= maxLen) return t;
+  return `${t.slice(0, maxLen - 1)}…`;
+}
+
+/**
+ * Plain "PHP 1,234.56" for PDFs — avoids ₱ (missing in Helvetica), which often renders as "±" in readers.
+ */
+export function formatPHP(value: number): string {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "PHP 0.00";
+  const num = new Intl.NumberFormat("en-PH", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(n);
+  return `PHP ${num}`;
+}
+
+/** Nested assignment receipt (Firestore), same shape as assignment.receipt */
+export interface ReportReceiptPayload {
+  confirmationNumber?: string;
+  lineItems?: Array<{
+    name?: string;
+    baseRate?: number;
+    hours?: number;
+    adjustedRate?: number;
+    amount?: number;
+  }>;
+  subtotal?: number;
+  commission?: number;
+  total?: number;
+  dynamicPricing?: { tier?: string; percent?: number; components?: unknown };
+  volunteerTier?: string;
+  rateAdjustment?: number;
+}
+
+function servicesToReceiptLabel(services: string | string[] | undefined): string {
+  return Array.isArray(services) ? services.join(", ") : (services || "");
+}
+
+function receiptHasDisplayableData(receipt: ReportReceiptPayload | null | undefined): boolean {
+  if (!receipt) return false;
+  if (Array.isArray(receipt.lineItems) && receipt.lineItems.length > 0) return true;
+  if (typeof receipt.total === "number" && Number.isFinite(receipt.total)) return true;
+  return false;
+}
+
+export type ReceiptSectionRow = {
+  assignmentId?: string;
+  serviceDateTS?: unknown;
+  services: string | string[];
+  elderName?: string;
+  volunteerName?: string;
+  volunteerEmail?: string;
+  receipt?: ReportReceiptPayload | null;
+};
+
+/** Appends compact “Receipts” after completed history; handles pagination. */
+function addReceiptsSection(doc: jsPDF, items: ReceiptSectionRow[], startY: number): number {
+  if (items.length === 0) return startY;
+  let y = startY;
+  if (y > PAGE_BREAK_Y) {
+    doc.addPage();
+    y = 20;
+  }
+  y = addSectionTitle(doc, "Receipts", y) + 1;
+  const anyReceipt = items.some((i) => receiptHasDisplayableData(i.receipt));
+  if (!anyReceipt) {
+    doc.setFontSize(8);
+    doc.setFont("helvetica", "italic");
+    doc.text("No itemized receipts in this period.", MARGIN, y, { maxWidth: PAGE_WIDTH - 2 * MARGIN });
+    return y + LINE_HEIGHT * 2;
+  }
+
+  for (const item of items) {
+    if (!receiptHasDisplayableData(item.receipt)) continue;
+    const r = item.receipt as ReportReceiptPayload;
+    if (y > PAGE_BREAK_Y) {
+      doc.addPage();
+      y = 20;
+    }
+
+    const dateStr = formatReceiptShortDate(item.serviceDateTS as number | { toMillis?: () => number });
+    const svc = truncateReceiptLabel(servicesToReceiptLabel(item.services), 42);
+    const conf =
+      r.confirmationNumber ||
+      (item.assignmentId ? `#${item.assignmentId.slice(0, 8).toUpperCase()}` : "—");
+    const volLabel = truncateReceiptLabel(item.volunteerName || item.volunteerEmail || "", 22);
+    const elderLabel = truncateReceiptLabel(item.elderName || "", 18);
+    const metaParts = [dateStr, conf, svc];
+    if (elderLabel) metaParts.push(`E:${elderLabel}`);
+    if (volLabel) metaParts.push(`V:${volLabel}`);
+    const headerLine = metaParts.join(" · ");
+
+    doc.setFontSize(8);
+    doc.setFont("helvetica", "bold");
+    doc.text(headerLine, MARGIN, y, { maxWidth: PAGE_WIDTH - 2 * MARGIN });
+    y += LINE_HEIGHT + 1;
+
+    const lineRows = (r.lineItems || []).map((li) => [
+      truncateReceiptLabel(li.name || "—", 28),
+      Number(li.hours ?? 0).toFixed(1),
+      formatPHP(li.adjustedRate ?? li.baseRate ?? 0),
+      formatPHP(li.amount ?? 0),
+    ]);
+    const bodyRows: (string | number)[][] =
+      lineRows.length > 0
+        ? lineRows
+        : [["—", "—", formatPHP(0), formatPHP(r.total ?? 0)]];
+    const footerRows: (string | number)[][] = [
+      ["", "", "Subtotal", formatPHP(r.subtotal ?? 0)],
+      ["", "", "5% fee", formatPHP(r.commission ?? 0)],
+      ["", "", "Total", formatPHP(r.total ?? 0)],
+    ];
+    const allBody = bodyRows.concat(footerRows);
+    const firstFooterIdx = bodyRows.length;
+
+    autoTable(doc, {
+      startY: y,
+      head: [["Service", "Hr", "Rate", "Amt"]],
+      body: allBody,
+      theme: "plain",
+      headStyles: { fillColor: [230, 230, 230], fontStyle: "bold", fontSize: 7 },
+      margin: { left: MARGIN, right: MARGIN },
+      tableWidth: PAGE_WIDTH - 2 * MARGIN,
+      styles: { fontSize: 7, cellPadding: 1.5 },
+      columnStyles: {
+        0: { cellWidth: 58 },
+        1: { halign: "right", cellWidth: 18 },
+        2: { halign: "right", cellWidth: 38 },
+        3: { halign: "right", cellWidth: 38 },
+      },
+      didParseCell: (data) => {
+        if (data.section !== "body") return;
+        const idx = data.row.index;
+        if (idx >= firstFooterIdx) {
+          data.cell.styles.fillColor = [248, 248, 248];
+          if (data.column.index === 2) data.cell.styles.fontStyle = "bold";
+          if (data.column.index === 3) data.cell.styles.fontStyle = idx === allBody.length - 1 ? "bold" : "normal";
+          if (data.column.index <= 1) data.cell.text = "";
+        }
+      },
+    });
+    y = ((doc as any).lastAutoTable?.finalY as number) + 2;
+
+    const dp = r.dynamicPricing;
+    const dpPct = dp && typeof dp.percent === "number" ? Math.round(dp.percent * 100) : null;
+    const tierBits: string[] = [];
+    if (dp && (dp.tier != null || dpPct != null)) {
+      tierBits.push(dp.tier ? String(dp.tier) : "");
+      if (dpPct != null) tierBits.push(`${dpPct}%`);
+    }
+    if (r.volunteerTier) tierBits.push(r.volunteerTier);
+    if (tierBits.length > 0) {
+      doc.setFontSize(7);
+      doc.setFont("helvetica", "normal");
+      doc.text(`Adj: ${tierBits.filter(Boolean).join(", ")}`, MARGIN, y, { maxWidth: PAGE_WIDTH - 2 * MARGIN });
+      y += LINE_HEIGHT - 1;
+    }
+    y += RECEIPT_SECTION_GAP;
+  }
+  return y;
+}
 
 export function formatTimestamp(ts: number | { toMillis?: () => number } | undefined): string {
   if (!ts) return "";
   const ms = typeof ts === "number" ? ts : ts?.toMillis?.();
   if (!ms) return "";
   return new Date(ms).toLocaleString();
+}
+
+/** Milliseconds from Firestore Timestamp, number (ms), or 0 if unknown. */
+export function toTimestampMs(ts: unknown): number {
+  if (ts == null) return 0;
+  if (typeof ts === "number" && Number.isFinite(ts)) return ts;
+  if (typeof ts === "object" && ts !== null && typeof (ts as { toMillis?: () => number }).toMillis === "function") {
+    const ms = (ts as { toMillis: () => number }).toMillis();
+    return typeof ms === "number" && Number.isFinite(ms) ? ms : 0;
+  }
+  return 0;
+}
+
+/** Whether a record’s timestamp falls in [startMs, endMs] inclusive. */
+export function isInDateRange(ts: unknown, startMs: number, endMs: number): boolean {
+  const ms = toTimestampMs(ts);
+  if (!ms) return false;
+  return ms >= startMs && ms <= endMs;
 }
 
 function addSectionTitle(doc: jsPDF, title: string, y: number): number {
@@ -58,6 +250,8 @@ function addDataTable(
 }
 
 export interface VolunteerReportData {
+  /** Shown under "Generated" when set, e.g. "Jan 1, 2025 – Jan 31, 2025" */
+  dateRangeLabel?: string;
   volunteerName: string;
   totalCompletedServices: number;
   totalCompletedHours: number;
@@ -68,12 +262,14 @@ export interface VolunteerReportData {
   hoursThisWeek: number;
   upcomingThisWeek: number;
   completedAssignments: Array<{
+    assignmentId?: string;
     serviceDateTS?: number | { toMillis?: () => number };
     elderName?: string;
     services: string | string[];
     startTimeText?: string;
     endTimeText?: string;
     durationMinutes: number;
+    receipt?: ReportReceiptPayload | null;
   }>;
   upcomingAssignments: Array<{
     serviceDateTS?: number | { toMillis?: () => number };
@@ -99,18 +295,27 @@ export function generateVolunteerReport(data: VolunteerReportData): void {
   doc.text(`Volunteer: ${data.volunteerName}`, MARGIN, y);
   y += LINE_HEIGHT;
   doc.text(`Generated: ${new Date().toLocaleString()}`, MARGIN, y);
+  if (data.dateRangeLabel) {
+    y += LINE_HEIGHT;
+    doc.text(`Report period: ${data.dateRangeLabel}`, MARGIN, y);
+  }
   y += SECTION_GAP;
 
   y = addSectionTitle(doc, "Personal Statistics", y);
+  const period = Boolean(data.dateRangeLabel);
   const statsRows: [string, string | number][] = [
-    ["Total completed services", data.totalCompletedServices],
-    ["Total hours", data.totalCompletedHours.toFixed(1)],
-    ["People helped", data.peopleHelped],
+    [period ? "Completed services (in period)" : "Total completed services", data.totalCompletedServices],
+    [period ? "Hours completed (in period)" : "Total hours", data.totalCompletedHours.toFixed(1)],
+    [period ? "People helped (in period)" : "People helped", data.peopleHelped],
     ["Average rating", data.ratingAvg != null ? data.ratingAvg.toFixed(1) : "—"],
     ["Rating count", data.ratingCount],
     ["Level", data.levelLabel],
-    ["Hours this week", data.hoursThisWeek.toFixed(1)],
-    ["Upcoming this week", data.upcomingThisWeek],
+    ...(period
+      ? [["Upcoming visits (in period)", data.upcomingThisWeek] as [string, string | number]]
+      : [
+          ["Hours this week", data.hoursThisWeek.toFixed(1)] as [string, string | number],
+          ["Upcoming this week", data.upcomingThisWeek] as [string, string | number],
+        ]),
   ];
   y = addKeyValueTable(doc, statsRows, y) + SECTION_GAP;
 
@@ -143,14 +348,25 @@ export function generateVolunteerReport(data: VolunteerReportData): void {
         `${a.startTimeText || ""} - ${a.endTimeText || ""}`,
         a.status || "Assigned",
       ]);
-    addDataTable(doc, scheduleHeaders, scheduleRows, y);
+    y = addDataTable(doc, scheduleHeaders, scheduleRows, y) + SECTION_GAP;
   }
+
+  const volunteerReceiptRows: ReceiptSectionRow[] = data.completedAssignments.map((a) => ({
+    assignmentId: a.assignmentId,
+    serviceDateTS: a.serviceDateTS,
+    services: a.services,
+    elderName: a.elderName,
+    volunteerName: data.volunteerName,
+    receipt: a.receipt,
+  }));
+  addReceiptsSection(doc, volunteerReceiptRows, y);
 
   const filename = `ElderEase-Volunteer-Report-${new Date().toISOString().slice(0, 10)}.pdf`;
   doc.save(filename);
 }
 
 export interface ElderReportData {
+  dateRangeLabel?: string;
   guardianName: string;
   pendingRequestsCount: number;
   upcomingCount: number;
@@ -174,12 +390,15 @@ export interface ElderReportData {
     address?: string;
   }>;
   completedAssignments: Array<{
+    assignmentId?: string;
     serviceDateTS?: unknown;
     services?: string[] | string;
+    elderName?: string;
     volunteerName?: string;
     volunteerEmail?: string;
     startTimeText?: string;
     endTimeText?: string;
+    receipt?: ReportReceiptPayload | null;
   }>;
 }
 
@@ -197,13 +416,18 @@ export function generateElderReport(data: ElderReportData): void {
   doc.text(`Guardian: ${data.guardianName}`, MARGIN, y);
   y += LINE_HEIGHT;
   doc.text(`Generated: ${new Date().toLocaleString()}`, MARGIN, y);
+  if (data.dateRangeLabel) {
+    y += LINE_HEIGHT;
+    doc.text(`Report period: ${data.dateRangeLabel}`, MARGIN, y);
+  }
   y += SECTION_GAP;
 
   y = addSectionTitle(doc, "Summary", y);
+  const periodElder = Boolean(data.dateRangeLabel);
   const summaryRows: [string, string | number][] = [
-    ["Pending requests", data.pendingRequestsCount],
-    ["Upcoming visits", data.upcomingCount],
-    ["Completed services", data.completedCount],
+    [periodElder ? "Pending requests (in period)" : "Pending requests", data.pendingRequestsCount],
+    [periodElder ? "Upcoming visits (in period)" : "Upcoming visits", data.upcomingCount],
+    [periodElder ? "Completed services (in period)" : "Completed services", data.completedCount],
   ];
   y = addKeyValueTable(doc, summaryRows, y) + SECTION_GAP;
 
@@ -243,14 +467,28 @@ export function generateElderReport(data: ElderReportData): void {
       a.volunteerName || a.volunteerEmail || "—",
       `${a.startTimeText || ""} - ${a.endTimeText || ""}`,
     ]);
-    addDataTable(doc, headers, rows, y);
+    y = addDataTable(doc, headers, rows, y) + SECTION_GAP;
   }
+
+  const elderReceiptRows: ReceiptSectionRow[] = data.completedAssignments.map((a) => ({
+    assignmentId: a.assignmentId,
+    serviceDateTS: a.serviceDateTS,
+    services: a.services ?? "",
+    elderName: a.elderName,
+    volunteerName: a.volunteerName,
+    volunteerEmail: a.volunteerEmail,
+    receipt: a.receipt,
+  }));
+  addReceiptsSection(doc, elderReceiptRows, y);
 
   const filename = `ElderEase-Guardian-Report-${new Date().toISOString().slice(0, 10)}.pdf`;
   doc.save(filename);
 }
 
 export interface AdminReportData {
+  dateRangeLabel?: string;
+  requestsInPeriodCount?: number;
+  completedInPeriodCount?: number;
   totalRequests: number;
   pendingRequests: number;
   activeVolunteers: number;
@@ -279,13 +517,16 @@ export interface AdminReportData {
     status?: string;
   }>;
   completedAssignments: Array<{
+    assignmentId?: string;
     serviceDateTS?: unknown;
     volunteerEmail?: string;
+    volunteerName?: string;
     elderName?: string;
     services?: string[];
     servicesStr?: string;
     startTimeText?: string;
     endTimeText?: string;
+    receipt?: ReportReceiptPayload | null;
   }>;
 }
 
@@ -301,6 +542,10 @@ export function generateAdminReport(data: AdminReportData): void {
   doc.setFontSize(10);
   doc.setFont("helvetica", "normal");
   doc.text(`Generated: ${new Date().toLocaleString()}`, MARGIN, y);
+  if (data.dateRangeLabel) {
+    y += LINE_HEIGHT;
+    doc.text(`Report period: ${data.dateRangeLabel}`, MARGIN, y);
+  }
   y += SECTION_GAP;
 
   // 1. Dashboard Summary
@@ -314,6 +559,12 @@ export function generateAdminReport(data: AdminReportData): void {
     ["Pending requests", data.pendingRequests],
     ["Completed services (all time)", totalCompleted],
     ["Completed this week", data.completedThisWeek],
+    ...(data.dateRangeLabel && data.requestsInPeriodCount != null && data.completedInPeriodCount != null
+      ? [
+          [`Service requests in period (see log below)`, data.requestsInPeriodCount],
+          [`Completed services in period (see history below)`, data.completedInPeriodCount],
+        ]
+      : []),
     ["Completion rate (%)", `${completionRate}%`],
     ["Active volunteers", data.activeVolunteers],
     ["Cancellation rate (%)", `${data.cancellationRate}%`],
@@ -390,7 +641,11 @@ export function generateAdminReport(data: AdminReportData): void {
 
   // 8. Service Request Log
   if (y > 240) { doc.addPage(); y = 20; }
-  y = addSectionTitle(doc, "Service Request Log", y);
+  y = addSectionTitle(
+    doc,
+    data.dateRangeLabel ? `Service Request Log (${data.dateRangeLabel})` : "Service Request Log",
+    y
+  );
   const reqHeaders = ["Created", "Elder Name", "Services", "Service Date", "Status"];
   const reqRows = data.requests.map((r) => [
     formatTimestamp(r.createdAt as number | { toMillis?: () => number }),
@@ -403,7 +658,11 @@ export function generateAdminReport(data: AdminReportData): void {
 
   // 9. Completed Service History
   if (y > 240) { doc.addPage(); y = 20; }
-  y = addSectionTitle(doc, "Completed Service History", y);
+  y = addSectionTitle(
+    doc,
+    data.dateRangeLabel ? `Completed Service History (${data.dateRangeLabel})` : "Completed Service History",
+    y
+  );
   const compHeaders = ["Date", "Volunteer", "Elder", "Services", "Time Slot"];
   const compRows = data.completedAssignments.map((a) => [
     formatTimestamp(a.serviceDateTS as number | { toMillis?: () => number }),
@@ -412,7 +671,18 @@ export function generateAdminReport(data: AdminReportData): void {
     Array.isArray(a.services) ? a.services.join(", ") : (a.servicesStr || ""),
     `${a.startTimeText || ""} - ${a.endTimeText || ""}`,
   ]);
-  addDataTable(doc, compHeaders, compRows, y);
+  y = addDataTable(doc, compHeaders, compRows, y) + SECTION_GAP;
+
+  const adminReceiptRows: ReceiptSectionRow[] = data.completedAssignments.map((a) => ({
+    assignmentId: a.assignmentId,
+    serviceDateTS: a.serviceDateTS,
+    services: Array.isArray(a.services) ? a.services : (a.servicesStr || ""),
+    elderName: a.elderName,
+    volunteerName: a.volunteerName,
+    volunteerEmail: a.volunteerEmail,
+    receipt: a.receipt,
+  }));
+  addReceiptsSection(doc, adminReceiptRows, y);
 
   const filename = `ElderEase-Admin-Report-${new Date().toISOString().slice(0, 10)}.pdf`;
   doc.save(filename);

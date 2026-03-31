@@ -19,6 +19,7 @@ import ServicesInfo from "@/pages/elder/ServicesInfo";
 import BrowseServices from "@/pages/elder/BrowseServices";
 import PaymentConfirmation from "@/pages/elder/PaymentConfirmation";
 import MySchedule from "@/pages/elder/MySchedule";
+import ElderProfile from "@/pages/elder/ElderProfile";
 import Dashboard from "@/pages/admin/Dashboard";
 import VolunteerApplications from "@/pages/admin/VolunteerApplications";
 import VolunteerList from "@/pages/admin/VolunteerList";
@@ -28,6 +29,7 @@ import MyAssignments from "@/pages/companion/MyAssignments";
 import FindRequests from "@/pages/companion/FindRequests";
 import CompanionProfile from "@/pages/companion/Profile";
 import ActivityLog from "@/pages/companion/ActivityLog";
+import TimeOff from "@/pages/companion/TimeOff";
 
 const queryClient = new QueryClient();
 
@@ -53,6 +55,7 @@ const App = () => (
             <Route path="services-info" element={<ServicesInfo />} />
             <Route path="browse-services" element={<BrowseServices />} />
             <Route path="payment-confirmation" element={<PaymentConfirmation />} />
+            <Route path="profile" element={<ElderProfile />} />
           </Route>
           <Route path="/admin" element={<Dashboard />} />
           <Route path="/admin/applications" element={<VolunteerApplications />} />
@@ -64,6 +67,7 @@ const App = () => (
             <Route path="assignments" element={<MyAssignments />} />
             <Route path="requests" element={<FindRequests />} />
             <Route path="activity" element={<ActivityLog />} />
+            <Route path="time-off" element={<TimeOff />} />
             <Route path="profile" element={<CompanionProfile />} />
           </Route>
 

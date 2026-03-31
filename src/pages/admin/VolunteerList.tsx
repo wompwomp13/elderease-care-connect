@@ -13,6 +13,8 @@ import { Badge } from "@/components/ui/badge";
 import { Search, SlidersHorizontal, ChevronDown, X } from "lucide-react";
 import { db } from "@/lib/firebase";
 import { collection, doc, getDocs, onSnapshot, query, serverTimestamp, updateDoc, where } from "firebase/firestore";
+import { format } from "date-fns";
+import { parseLeaveDoc } from "@/lib/volunteer-leave";
 import { useToast } from "@/components/ui/use-toast";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
@@ -70,6 +72,9 @@ const VolunteerList = () => {
   const [terminationReason, setTerminationReason] = useState("");
   const [reactivateTarget, setReactivateTarget] = useState<Volunteer | null>(null);
   const [phoneError, setPhoneError] = useState<string | null>(null);
+  const [editingLeaveRows, setEditingLeaveRows] = useState<
+    Array<{ id: string; startDayMs: number; endDayMs: number; reason?: string }>
+  >([]);
 
   // Allowed service catalog (normalized)
   const ALLOWED_SERVICE_LABELS: Record<string, string> = {
@@ -607,6 +612,31 @@ const VolunteerList = () => {
                   ))}
                 </div>
               </div>
+              {editing?.status === "approved" && (
+                <div className="rounded-lg border bg-muted/25 p-3 space-y-2">
+                  <p className="text-sm font-medium">Upcoming / scheduled time off</p>
+                  <p className="text-xs text-muted-foreground">
+                    Volunteers set this in Companion → Time off. Dates are inclusive.
+                  </p>
+                  {editingLeaveRows.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">No leave periods on file.</p>
+                  ) : (
+                    <ul className="text-xs space-y-1.5 max-h-32 overflow-y-auto">
+                      {editingLeaveRows.map((row) => (
+                        <li key={row.id} className="flex justify-between gap-2 border-b border-border/60 pb-1 last:border-0">
+                          <span>
+                            {format(new Date(row.startDayMs), "MMM d, yyyy")} –{" "}
+                            {format(new Date(row.endDayMs), "MMM d, yyyy")}
+                          </span>
+                          <span className="text-muted-foreground shrink-0 capitalize">
+                            {(row.reason || "—").replace(/_/g, " ")}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
               </div>
               {editing && (
                 <div className="md:w-48 shrink-0 md:border-l md:pl-6 flex flex-col gap-4">

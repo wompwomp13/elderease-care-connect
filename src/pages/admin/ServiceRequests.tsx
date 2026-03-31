@@ -12,6 +12,14 @@ import { useToast } from "@/hooks/use-toast";
 import { db } from "@/lib/firebase";
 import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, limit, onSnapshot, orderBy, query, serverTimestamp, updateDoc, where } from "firebase/firestore";
 import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "@/components/ui/pagination";
+import { deletePendingServiceRequestNotifications } from "@/lib/guardian-notifications";
+import { getAssignmentServiceDayMs, leaveDocOverlapsCalendarDay } from "@/lib/volunteer-leave";
+
+/** Service request day key aligned with assignments / leave queries (handles Timestamp or ms). */
+function getRequestDayMs(req: { serviceDateTS?: unknown }): number | null {
+  const ms = getAssignmentServiceDayMs({ serviceDateTS: req.serviceDateTS as number | { toMillis?: () => number } | undefined });
+  return ms > 0 ? ms : null;
+}
 
 // Base hourly rates (PHP) per service
 const SERVICE_RATES: Record<string, number> = {
@@ -44,6 +52,7 @@ const ServiceRequests = () => {
   const [page, setPage] = useState<number>(1);
   const perPage = 5;
   const [busyByDate, setBusyByDate] = useState<Record<number, Record<string, Array<[number, number]>>>>({});
+  const [leaveEmailsByDay, setLeaveEmailsByDay] = useState<Record<number, Set<string>>>({});
   const [deleteTarget, setDeleteTarget] = useState<any | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
@@ -141,7 +150,13 @@ const ServiceRequests = () => {
     const safePage = Math.min(page, totalPages);
     const start = (safePage - 1) * perPage;
     const items = requests.slice(start, start + perPage);
-    const dates = Array.from(new Set(items.map((r) => Number(r.serviceDateTS)).filter((n) => Number.isFinite(n))));
+    const dates = Array.from(
+      new Set(
+        items
+          .map((r) => getRequestDayMs(r))
+          .filter((n): n is number => n != null)
+      )
+    );
     const oneDayMs = 24 * 60 * 60 * 1000;
     const unsubs = dates.map((dayMs) => {
       // Clear the day entry immediately to avoid stale data during reloading
@@ -187,6 +202,48 @@ const ServiceRequests = () => {
       });
     });
     return () => { unsubs.forEach((u) => u()); };
+  }, [requests, page]);
+
+  useEffect(() => {
+    if (!requests || requests.length === 0) {
+      setLeaveEmailsByDay({});
+      return;
+    }
+    const totalPages = Math.max(1, Math.ceil(requests.length / perPage));
+    const safePage = Math.min(page, totalPages);
+    const start = (safePage - 1) * perPage;
+    const items = requests.slice(start, start + perPage);
+    const dates = Array.from(
+      new Set(
+        items
+          .map((r) => getRequestDayMs(r))
+          .filter((n): n is number => n != null)
+      )
+    );
+    if (dates.length === 0) {
+      setLeaveEmailsByDay({});
+      return;
+    }
+    const minDay = Math.min(...dates);
+    // One range filter avoids composite index; overlap per request day is applied client-side.
+    const q = query(collection(db, "volunteerLeave"), where("endDayMs", ">=", minDay));
+    const unsub = onSnapshot(q, (snap) => {
+      setLeaveEmailsByDay((prev) => {
+        const next = { ...prev };
+        for (const dayMs of dates) {
+          const s = new Set<string>();
+          snap.docs.forEach((d) => {
+            const row = leaveDocOverlapsCalendarDay(d.data() as Record<string, unknown>, dayMs);
+            if (!row) return;
+            const em = row.volunteerEmail.toLowerCase().trim();
+            if (em) s.add(em);
+          });
+          next[dayMs] = s;
+        }
+        return next;
+      });
+    });
+    return () => unsub();
   }, [requests, page]);
 
   const toServiceId = (nameOrId: string): "companionship" | "housekeeping" | "errands" | "visits" | "socialization" | "unknown" => {
@@ -263,13 +320,19 @@ const ServiceRequests = () => {
     return pages;
   };
 
-  const renderStars = (ratingNum: number) => {
-    const full = Math.round(ratingNum ?? 0);
+  /** Compact rating for volunteer cards (avoids clipping in narrow columns). */
+  const renderRatingSummary = (ratingNum: number | null | undefined) => {
+    if (typeof ratingNum !== "number" || ratingNum <= 0) {
+      return <span className="text-xs text-muted-foreground whitespace-nowrap">Not rated</span>;
+    }
+    const r = ratingNum.toFixed(1);
     return (
-      <div className="flex items-center gap-0.5" aria-label={`Rating ${full} out of 5`}>
-        {[0,1,2,3,4].map((i) => (
-          <Star key={i} className={`h-4 w-4 ${i < full ? "text-amber-500 fill-amber-500" : "text-muted-foreground"}`} />
-        ))}
+      <div className="flex flex-col items-end gap-0.5 shrink-0 min-w-0" aria-label={`Rating ${r} out of 5`}>
+        <div className="flex items-center gap-0.5 text-amber-500 sm:gap-1">
+          <Star className="h-3.5 w-3.5 shrink-0 fill-amber-500 text-amber-500 sm:h-4 sm:w-4" aria-hidden />
+          <span className="text-xs font-semibold tabular-nums leading-none sm:text-sm">{r}</span>
+        </div>
+        <span className="hidden text-[10px] text-muted-foreground whitespace-nowrap sm:block">out of 5</span>
       </div>
     );
   };
@@ -279,9 +342,9 @@ const ServiceRequests = () => {
   // Demand-based modifier uses competing requests vs available matching volunteers in the window
   const getDemandModifier = (req: any): { tier: "Normal" | "High" | "Peak" | "Surge"; percent: number; ratio: number } => {
     try {
-      const day = Number(req.serviceDateTS);
+      const day = getRequestDayMs(req);
       const s = toMinutes(req.startTime24), e = toMinutes(req.endTime24);
-      if (!Number.isFinite(day) || s == null || e == null) return { tier: "Normal", percent: 0, ratio: 0 };
+      if (day == null || s == null || e == null) return { tier: "Normal", percent: 0, ratio: 0 };
       const reqServiceIds: string[] = Array.isArray(req.services)
         ? req.services.map((x: string) => toServiceId(x))
         : req.service ? [toServiceId(req.service)] : [];
@@ -297,7 +360,7 @@ const ServiceRequests = () => {
       // Competing requests in the same window (pending or assigned)
       const competing = (requests || []).filter((r) => {
         if (r.id === req.id) return false;
-        if (Number(r.serviceDateTS) !== day) return false;
+        if (getRequestDayMs(r) !== day) return false;
         const rs = toMinutes(r.startTime24), re = toMinutes(r.endTime24);
         if (rs == null || re == null) return false;
         const st = (r.status || "pending").toLowerCase();
@@ -318,13 +381,23 @@ const ServiceRequests = () => {
 
   const isVolunteerAvailableForRequest = (vol: any, req: any): boolean => {
     if (!req || !vol) return true;
-    const day = Number(req.serviceDateTS);
+    const day = getRequestDayMs(req);
     const s = toMinutes(req.startTime24);
     const e = toMinutes(req.endTime24);
-    if (!Number.isFinite(day) || s == null || e == null) return true;
+    if (day == null || s == null || e == null) return true;
+    const emailKey = (vol.email || "").toLowerCase();
+    if (leaveEmailsByDay[day]?.has(emailKey)) return false;
     const map = busyByDate[day] || {};
-    const intervals = map[(vol.email || "").toLowerCase()] || [];
+    const intervals = map[emailKey] || [];
     return !intervals.some(([bs, be]) => hasOverlap(s, e, bs, be));
+  };
+
+  const isVolunteerOnLeaveForRequest = (vol: any, req: any): boolean => {
+    if (!req || !vol) return false;
+    const day = getRequestDayMs(req);
+    if (day == null) return false;
+    const emailKey = (vol.email || "").toLowerCase();
+    return leaveEmailsByDay[day]?.has(emailKey) ?? false;
   };
 
   const hasVolunteerDeclinedRequest = (vol: any, req: any): boolean => {
@@ -362,15 +435,30 @@ const ServiceRequests = () => {
         // Quick UI availability check
         const uiAvailable = isVolunteerAvailableForRequest(volunteer, req);
         if (!uiAvailable) {
-          toast({ title: "Schedule conflict", description: "This volunteer is not available for the selected time.", variant: "destructive" });
+          if (isVolunteerOnLeaveForRequest(volunteer, req)) {
+            toast({
+              title: "Volunteer on leave",
+              description: "This volunteer marked this day as time off. Choose someone else or ask them to update time off.",
+              variant: "destructive",
+            });
+          } else {
+            toast({ title: "Schedule conflict", description: "This volunteer is not available for the selected time.", variant: "destructive" });
+          }
           return;
         }
         // Server-side double-check
-        const aSnap = await getDocs(query(
-          collection(db, "assignments"),
-          where("volunteerEmail", "==", volunteer.email || null),
-          where("serviceDateTS", "==", Number(req.serviceDateTS) || 0)
-        ));
+        const reqDay = getRequestDayMs(req) ?? 0;
+        const volEmailKey = (volunteer.email || "").toLowerCase().trim();
+        const aSnap =
+          volEmailKey.length > 0
+            ? await getDocs(
+                query(
+                  collection(db, "assignments"),
+                  where("volunteerEmail", "==", volEmailKey),
+                  where("serviceDateTS", "==", reqDay)
+                )
+              )
+            : { docs: [] as never[] };
         const s = toMinutes(req.startTime24), e = toMinutes(req.endTime24);
         let conflict = false;
         aSnap.docs.forEach((d) => {
@@ -386,6 +474,22 @@ const ServiceRequests = () => {
         if (conflict) {
           toast({ title: "Schedule conflict", description: "This volunteer has another assignment at that time.", variant: "destructive" });
           return;
+        }
+
+        if (volEmailKey && reqDay > 0) {
+          const leaveSnap = await getDocs(query(collection(db, "volunteerLeave"), where("endDayMs", ">=", reqDay)));
+          const serverOnLeave = leaveSnap.docs.some((d) => {
+            const row = leaveDocOverlapsCalendarDay(d.data() as Record<string, unknown>, reqDay);
+            return row && row.volunteerEmail.toLowerCase().trim() === volEmailKey;
+          });
+          if (serverOnLeave) {
+            toast({
+              title: "Volunteer on leave",
+              description: "This volunteer has time off on that day. They must update Time off before assignment.",
+              variant: "destructive",
+            });
+            return;
+          }
         }
 
         await updateDoc(doc(db, "serviceRequests", requestId), { status: "assigned", assignedTo: volunteer.fullName });
@@ -457,6 +561,7 @@ const ServiceRequests = () => {
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         });
+        await deletePendingServiceRequestNotifications(db, requestId);
       }
       toast({ title: "Volunteer Assigned", description: `${volunteer.fullName} has been assigned. Receipt sent to elder notifications.` });
     } catch (e: any) {
@@ -743,12 +848,12 @@ const ServiceRequests = () => {
                       }
                       const pages = chunkList(compatible, 3);
                       return (
-                        <div className="relative rounded-2xl bg-gradient-to-r from-primary/5 via-background to-primary/5 p-5">
-                          <Carousel className="px-8 md:px-10">
+                        <div className="relative rounded-2xl bg-gradient-to-r from-primary/5 via-background to-primary/5 p-4 sm:p-5">
+                          <Carousel className="px-8 md:px-10" opts={{ align: "start", containScroll: "trimSnaps" }}>
                             <CarouselContent>
                               {pages.map((page, idx) => (
                                 <CarouselItem key={idx}>
-                                  <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
+                                  <div className="grid grid-cols-3 gap-3 md:gap-5">
                                     {page.map((v) => {
                                       const hasRating = typeof v.rating === "number" && v.rating > 0;
                                       const tasks = v.tasksCompleted ?? 0;
@@ -758,60 +863,100 @@ const ServiceRequests = () => {
                                         : request.service ? [toServiceId(request.service)] : [];
                                       const matches = reqServiceIds.filter((id: string) => volServiceIds.includes(id));
                                       const matchPct = reqServiceIds.length ? Math.round((matches.length / reqServiceIds.length) * 100) : 0;
+                                      const matchLabels = matches.map((m) => m[0]?.toUpperCase() + m.slice(1)).join(", ") || "No overlap";
                                       const preferred = ((v.email || "").toLowerCase() === (request?.preferredVolunteerEmail || "").toLowerCase());
                                       const declined = hasVolunteerDeclinedRequest(v, request);
-                                      const canAssign = !declined && isVolunteerAvailableForRequest(v, request);
+                                      const onLeave = isVolunteerOnLeaveForRequest(v, request);
+                                      const available = isVolunteerAvailableForRequest(v, request);
+                                      const canAssign = !declined && available;
+                                      const assignButtonLabel = canAssign
+                                        ? "Assign"
+                                        : declined
+                                          ? "Unavailable"
+                                          : onLeave
+                                            ? "On leave"
+                                            : "Unavailable";
                                       return (
-                                        <div key={v.id} className={`rounded-2xl border bg-card/70 backdrop-blur shadow-sm hover:shadow-md transition-shadow overflow-hidden select-none ${declined ? "border-2 border-red-200 dark:border-red-800/60" : ""}`}>
-                                          <div className="p-5 cursor-grab active:cursor-grabbing">
-                                            <div className="flex items-start justify-between mb-3">
-                                              <div className="flex items-center gap-3">
-                                                <VolunteerAvatar profilePhotoUrl={v.profilePhotoUrl} name={v.fullName} size="md" />
+                                        <div
+                                          key={v.id}
+                                          className={`flex min-h-0 min-w-0 flex-col rounded-2xl border bg-card/70 shadow-sm backdrop-blur transition-shadow select-none hover:shadow-md ${declined ? "border-2 border-red-200 dark:border-red-800/60" : ""}`}
+                                        >
+                                          <div className="min-h-0 min-w-0 flex-1 cursor-grab p-4 active:cursor-grabbing sm:p-5">
+                                            <div className="mb-3 flex items-start justify-between gap-2">
+                                              <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
+                                                <VolunteerAvatar profilePhotoUrl={v.profilePhotoUrl} name={v.fullName} size="md" className="shrink-0" />
                                                 <div className="min-w-0">
-                                                  <p className="font-semibold leading-tight truncate">
-                                                    {v.fullName}
-                                                    {preferred && <span className="ml-2 align-middle text-[10px] font-semibold px-2 py-0.5 rounded-full bg-primary/10 text-primary">Preferred</span>}
+                                                  <p className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5 font-semibold leading-tight">
+                                                    <span className="break-words">{v.fullName}</span>
+                                                    {preferred && (
+                                                      <span className="inline-flex shrink-0 items-center rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">
+                                                        Preferred
+                                                      </span>
+                                                    )}
                                                   </p>
-                                                  <p className="text-[10px] uppercase tracking-wider text-primary/70 font-medium">Volunteer</p>
+                                                  <p className="text-[10px] font-medium uppercase tracking-wider text-primary/70">Volunteer</p>
                                                 </div>
                                               </div>
-                                              <div className="text-right">
-                                                {hasRating ? (
-                                                  <>
-                                                    {renderStars(v.rating)}
-                                                    <p className="text-xs text-muted-foreground mt-0.5">{v.rating.toFixed(1)} rating</p>
-                                                  </>
+                                              <div className="shrink-0 pl-1 text-right">
+                                                {hasRating ? renderRatingSummary(v.rating) : <span className="text-[10px] text-muted-foreground sm:text-xs">Not rated</span>}
+                                              </div>
+                                            </div>
+                                            <p className="mb-3 line-clamp-2 min-h-[2.5rem] text-sm text-muted-foreground">
+                                              {(v.bio || `Experienced in ${Array.isArray(v.services) ? v.services.slice(0, 2).join(" and ") : "care"} services.`).toString()}
+                                            </p>
+                                            <div className="mb-3 flex flex-wrap gap-1.5">
+                                              {normalizeServiceLabels(v.services || [])
+                                                .slice(0, 3)
+                                                .map((s: string) => (
+                                                  <Badge key={s} variant="outline" className="max-w-full truncate capitalize text-xs">
+                                                    {s.replace("_", " ")}
+                                                  </Badge>
+                                                ))}
+                                            </div>
+                                            <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 border-b pb-4 text-[11px] text-muted-foreground sm:text-xs">
+                                              <div className="flex shrink-0 items-center gap-1">
+                                                <BarChart3 className="h-3.5 w-3.5 shrink-0 sm:h-4 sm:w-4" aria-hidden />
+                                                <span className="whitespace-nowrap">{tasks} tasks</span>
+                                              </div>
+                                              <span className="hidden h-1 w-1 shrink-0 rounded-full bg-muted-foreground/50 sm:inline-block" aria-hidden />
+                                              <div className="min-w-0 flex-1 basis-[8rem] leading-snug">
+                                                <span className="font-medium text-foreground">{matchPct}% match</span>
+                                                <span className="text-muted-foreground"> · </span>
+                                                <span className="break-words">{matchLabels}</span>
+                                              </div>
+                                              <div className="ml-auto flex shrink-0 justify-end">
+                                                {declined ? (
+                                                  <Badge variant="destructive" className="max-w-[9rem] truncate px-2 py-0.5 text-[10px] font-medium sm:max-w-none sm:text-xs">
+                                                    Declined
+                                                  </Badge>
+                                                ) : onLeave ? (
+                                                  <Badge
+                                                    variant="outline"
+                                                    className="max-w-[9rem] truncate border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-900 dark:border-amber-700 dark:bg-amber-950/50 dark:text-amber-100 sm:max-w-none sm:text-xs"
+                                                  >
+                                                    On leave
+                                                  </Badge>
+                                                ) : available ? (
+                                                  <Badge
+                                                    variant="outline"
+                                                    className="max-w-[9rem] truncate border-emerald-300 bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-800 dark:border-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-100 sm:max-w-none sm:text-xs"
+                                                  >
+                                                    Available
+                                                  </Badge>
                                                 ) : (
-                                                  <span className="text-xs text-muted-foreground">Not yet rated</span>
+                                                  <Badge variant="destructive" className="max-w-[9rem] truncate px-2 py-0.5 text-[10px] font-medium sm:max-w-none sm:text-xs">
+                                                    Schedule conflict
+                                                  </Badge>
                                                 )}
                                               </div>
                                             </div>
-                                            <p className="text-sm text-muted-foreground mb-3 line-clamp-2 min-h-[2.5rem]">
-                                              {(v.bio || `Experienced in ${Array.isArray(v.services) ? v.services.slice(0,2).join(" and ") : "care"} services.`).toString()}
-                                            </p>
-                                            <div className="flex flex-wrap gap-1.5 mb-3">
-                                              {normalizeServiceLabels(v.services || []).slice(0, 3).map((s: string) => (
-                                                <Badge key={s} variant="outline" className="capitalize text-xs">
-                                                  {s.replace("_", " ")}
-                                                </Badge>
-                                              ))}
-                                            </div>
-                                            <div className="flex items-center gap-3 text-xs text-muted-foreground pb-4 border-b">
-                                              <div className="flex items-center gap-1">
-                                                <BarChart3 className="h-4 w-4" />
-                                                <span>{tasks} tasks</span>
-                                              </div>
-                                              <span className="inline-block h-1 w-1 rounded-full bg-muted-foreground/50" />
-                                              <span>{matchPct}% match • {matches.map((m) => m[0]?.toUpperCase() + m.slice(1)).join(", ") || "No match"}</span>
-                                              <span className={`ml-auto ${declined ? "text-destructive font-medium" : isVolunteerAvailableForRequest(v, request) ? "text-emerald-600" : "text-destructive"}`}>
-                                                {declined ? "Unavailable" : isVolunteerAvailableForRequest(v, request) ? "Available" : "Conflict"}
-                                              </span>
-                                            </div>
                                           </div>
-                                          <div className="flex items-center justify-between px-5 py-3 bg-muted/30 cursor-default select-auto">
+                                          <div className="flex cursor-default items-center justify-between gap-2 border-t border-border/60 bg-muted/30 px-4 py-3 select-auto sm:px-5">
                                             <Dialog>
                                               <DialogTrigger asChild>
-                                                <button className="text-sm text-primary hover:underline font-medium">Read more</button>
+                                                <button type="button" className="shrink-0 text-left text-xs font-medium text-primary hover:underline sm:text-sm">
+                                                  Read more
+                                                </button>
                                               </DialogTrigger>
                                               <DialogContent className="max-w-md">
                                                 <DialogHeader>
@@ -828,36 +973,53 @@ const ServiceRequests = () => {
                                                   </div>
                                                   <div className="flex items-center gap-2">
                                                     <span className="font-medium">Rating:</span>
-                                                    <span>{hasRating ? v.rating.toFixed(1) : 'Not yet rated'}</span>
+                                                    <span>{hasRating ? `${v.rating.toFixed(1)} / 5` : "Not yet rated"}</span>
                                                   </div>
                                                   <div className="flex items-center gap-2">
                                                     <span className="font-medium">Tasks completed:</span>
                                                     <span>{tasks}</span>
                                                   </div>
                                                   <div>
-                                                    <p className="font-medium text-foreground mb-1">Services</p>
+                                                    <p className="mb-1 font-medium text-foreground">Services</p>
                                                     <div className="flex flex-wrap gap-1.5">
                                                       {normalizeServiceLabels(v.services || []).map((s: string) => (
-                                                        <Badge key={s} variant="secondary" className="capitalize">{s.replace("_", " ")}</Badge>
+                                                        <Badge key={s} variant="secondary" className="capitalize">
+                                                          {s.replace("_", " ")}
+                                                        </Badge>
                                                       ))}
                                                     </div>
                                                   </div>
-                                                  <div className={`font-medium ${declined ? "text-destructive" : isVolunteerAvailableForRequest(v, request) ? "text-emerald-600" : "text-destructive"}`}>
-                                                    Availability: {declined ? "Unavailable (declined)" : isVolunteerAvailableForRequest(v, request) ? "Available" : "Conflict at selected time"}
+                                                  <div
+                                                    className={`font-medium ${declined ? "text-destructive" : available ? "text-emerald-600" : onLeave ? "text-amber-700 dark:text-amber-400" : "text-destructive"}`}
+                                                  >
+                                                    Availability:{" "}
+                                                    {declined
+                                                      ? "Unavailable (declined)"
+                                                      : onLeave
+                                                        ? "On leave (time off)"
+                                                        : available
+                                                          ? "Available"
+                                                          : "Schedule conflict at selected time"}
                                                   </div>
                                                   {v.bio && (
                                                     <div>
-                                                      <p className="font-medium text-foreground mb-1">About</p>
+                                                      <p className="mb-1 font-medium text-foreground">About</p>
                                                       <p>{v.bio}</p>
                                                     </div>
                                                   )}
                                                 </div>
                                               </DialogContent>
                                             </Dialog>
-                                            <Button onClick={() => handleAssign(request.id, v)} disabled={!canAssign} aria-disabled={!canAssign}>
-                                              {canAssign ? "Assign" : "Unavailable"}
+                                            <Button
+                                              className="shrink-0 px-3 text-xs sm:px-4 sm:text-sm"
+                                              onClick={() => handleAssign(request.id, v)}
+                                              disabled={!canAssign}
+                                              aria-disabled={!canAssign}
+                                              variant={canAssign ? "default" : "secondary"}
+                                            >
+                                              {assignButtonLabel}
                                             </Button>
-                    </div>
+                                          </div>
                                         </div>
                                       );
                                     })}
@@ -865,8 +1027,8 @@ const ServiceRequests = () => {
                                 </CarouselItem>
                               ))}
                             </CarouselContent>
-                            <CarouselPrevious className="left-2 top-1/2 -translate-y-1/2 bg-background/90 shadow border" />
-                            <CarouselNext className="right-2 top-1/2 -translate-y-1/2 bg-background/90 shadow border" />
+                            <CarouselPrevious className="left-2 top-1/2 z-10 -translate-y-1/2 border bg-background/90 shadow" />
+                            <CarouselNext className="right-2 top-1/2 z-10 -translate-y-1/2 border bg-background/90 shadow" />
                           </Carousel>
                         </div>
                       );

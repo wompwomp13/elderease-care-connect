@@ -98,6 +98,59 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    // Volunteer time off (full-day unavailability) — companions manage own docs; all signed-in may read for scheduling
+    match /volunteerLeave/{leaveId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && volunteerLeaveCreateValid();
+      allow update: if isSignedIn() && volunteerLeaveUpdateValid();
+      allow delete: if isSignedIn() && volunteerLeaveDeleteValid();
+
+      function volunteerPendingDoc(docId) {
+        return get(/databases/$(database)/documents/pendingVolunteers/$(docId));
+      }
+      function companionOwnsVolunteerDoc(docId) {
+        return volunteerPendingDoc(docId).data.status == 'approved'
+          && volunteerPendingDoc(docId).data.email == request.auth.token.email;
+      }
+      function volunteerLeaveCreateValid() {
+        let d = request.resource.data;
+        return request.auth.token.email != null
+          && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'companion'
+          && d.keys().hasAll(['volunteerDocId', 'volunteerEmail', 'startDayMs', 'endDayMs', 'createdAt', 'updatedAt'])
+          && d.volunteerDocId is string
+          && d.volunteerEmail is string
+          && d.startDayMs is int
+          && d.endDayMs is int
+          && d.startDayMs <= d.endDayMs
+          && d.volunteerEmail == request.auth.token.email
+          && companionOwnsVolunteerDoc(d.volunteerDocId)
+          && (!('reason' in d) || d.reason is string)
+          && (!('note' in d) || d.note is string);
+      }
+      function volunteerLeaveDeleteValid() {
+        let d = resource.data;
+        return request.auth.token.email != null
+          && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'companion'
+          && d.volunteerEmail == request.auth.token.email
+          && companionOwnsVolunteerDoc(d.volunteerDocId);
+      }
+      function volunteerLeaveUpdateValid() {
+        let next = request.resource.data;
+        let prev = resource.data;
+        return request.auth.token.email != null
+          && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'companion'
+          && prev.volunteerDocId == next.volunteerDocId
+          && prev.volunteerEmail == next.volunteerEmail
+          && next.volunteerEmail == request.auth.token.email
+          && companionOwnsVolunteerDoc(next.volunteerDocId)
+          && next.startDayMs is int
+          && next.endDayMs is int
+          && next.startDayMs <= next.endDayMs
+          && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['startDayMs', 'endDayMs', 'reason', 'note', 'updatedAt']);
+      }
+    }
+
     function isSignedIn() {
       return request.auth != null;
     }

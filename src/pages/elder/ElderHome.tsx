@@ -1,8 +1,8 @@
-import { Link, useLocation } from "react-router-dom";
-import { getCurrentUser, logout } from "@/lib/auth";
+import { Link } from "react-router-dom";
+import { getCurrentUser } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import logo from "@/assets/logo.png";
+import { ElderNavbar } from "@/components/elder/ElderNavbar";
 import companionshipImage from "@/assets/elder-companionship.jpg";
 import { useMemo, useRef, useState, useEffect } from "react";
 import { HeartHandshake, ShoppingBasket, Home, Users, Calendar, Bell, MessageSquare, Sparkles, Download } from "lucide-react";
@@ -12,44 +12,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { generateElderReport } from "@/lib/report-utils";
-
-const ElderNavbar = () => {
-  const user = getCurrentUser();
-  const location = useLocation();
-  const isActive = (path: string) => location.pathname === path;
-  return (
-    <nav className="bg-primary text-primary-foreground sticky top-0 z-50 shadow-md">
-      <div className="container mx-auto h-16 px-4 flex items-center justify-between">
-        <Link to="/elder" className="flex items-center gap-2" aria-label="ElderEase Home" tabIndex={0}>
-          <img src={logo} alt="ElderEase Logo" className="h-8 w-8" />
-          <span className="text-lg font-bold">ElderEase</span>
-        </Link>
-         <div className="hidden md:flex items-center gap-5" role="navigation" aria-label="Primary">
-           <Link to="/elder" className={`transition-opacity ${isActive("/elder") ? "font-semibold underline underline-offset-8 opacity-100" : "opacity-90 hover:opacity-100"}`}>Home</Link>
-           <Link to="/elder/schedule" className={`transition-opacity ${isActive("/elder/schedule") ? "font-semibold underline underline-offset-8 opacity-100" : "opacity-90 hover:opacity-100"}`}>My Schedule</Link>
-           <Link to="/elder/request-service" className={`transition-opacity ${isActive("/elder/request-service") ? "font-semibold underline underline-offset-8 opacity-100" : "opacity-90 hover:opacity-100"}`}>Request Service</Link>
-           <Link to="/elder/notifications" className={`transition-opacity ${isActive("/elder/notifications") ? "font-semibold underline underline-offset-8 opacity-100" : "opacity-90 hover:opacity-100"}`}>Notifications</Link>
-           <button className="hover:opacity-80 transition-opacity">Profile</button>
-          {user ? (
-            <Button
-              variant="nav"
-              size="sm"
-              onClick={() => { logout(); window.location.href = "/"; }}
-              aria-label="Log out"
-            >
-              Logout
-            </Button>
-          ) : (
-            <Link to="/login">
-              <Button variant="nav" size="sm">Login</Button>
-            </Link>
-          )}
-        </div>
-      </div>
-    </nav>
-  );
-};
+import { deletePendingServiceRequestNotifications } from "@/lib/guardian-notifications";
+import { generateElderReport, isInDateRange, toTimestampMs } from "@/lib/report-utils";
+import { ReportDateRangeDialog, type ReportDateRangeConfirm } from "@/components/reports/ReportDateRangeDialog";
 
 type ChatMessage = { id: string; sender: "bot" | "user"; text: string; time: string };
 
@@ -196,6 +161,74 @@ const ElderHome = () => {
   const [cancelTarget, setCancelTarget] = useState<any | null>(null);
   const [cancelReason, setCancelReason] = useState<string>("schedule_change");
   const [cancelOther, setCancelOther] = useState<string>("");
+  const [reportRangeOpen, setReportRangeOpen] = useState(false);
+
+  const elderRequestInRange = (r: { serviceDateTS?: unknown; createdAt?: unknown }, startMs: number, endMs: number) => {
+    const sd = toTimestampMs(r.serviceDateTS);
+    const cd = toTimestampMs(r.createdAt);
+    const t = sd || cd;
+    if (!t) return true;
+    return t >= startMs && t <= endMs;
+  };
+
+  const runGuardianReport = async (range: ReportDateRangeConfirm) => {
+    const uid = user?.id;
+    if (!uid) return;
+    const [reqSnap, assignSnap] = await Promise.all([
+      getDocs(query(collection(db, "serviceRequests"), where("userId", "==", uid))),
+      getDocs(query(collection(db, "assignments"), where("elderUserId", "==", uid))),
+    ]);
+    const allRequests = reqSnap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
+    const allAssignments = assignSnap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
+    const pendingReqs = allRequests
+      .filter((r) => (r.status || "pending") === "pending")
+      .filter((r) => elderRequestInRange(r, range.startMs, range.endMs));
+    const getTs = (a: any) => (typeof a.serviceDateTS === "number" ? a.serviceDateTS : (a.serviceDateTS?.toMillis?.() ?? 0));
+    const upcomingAssign = allAssignments
+      .filter((a) => a.status !== "completed" && a.status !== "cancelled" && a.status !== "declined")
+      .filter((a) => isInDateRange(a.serviceDateTS, range.startMs, range.endMs))
+      .sort((a, b) => getTs(a) - getTs(b));
+    const completedAssign = allAssignments
+      .filter((a) => a.status === "completed" && a.guardianConfirmed === true)
+      .filter((a) => isInDateRange(a.serviceDateTS, range.startMs, range.endMs))
+      .sort((a, b) => getTs(b) - getTs(a));
+    generateElderReport({
+      dateRangeLabel: range.label,
+      guardianName: greetingName,
+      pendingRequestsCount: pendingReqs.length,
+      upcomingCount: upcomingAssign.length,
+      completedCount: completedAssign.length,
+      pendingRequests: pendingReqs.map((r) => ({
+        services: r.services,
+        serviceDateDisplay: r.serviceDateDisplay,
+        serviceDateTS: r.serviceDateTS,
+        startTimeText: r.startTimeText,
+        endTimeText: r.endTimeText,
+        status: r.status,
+        createdAt: r.createdAt,
+      })),
+      upcomingAssignments: upcomingAssign.map((a) => ({
+        serviceDateTS: a.serviceDateTS,
+        services: a.services,
+        volunteerName: a.volunteerName,
+        volunteerEmail: a.volunteerEmail,
+        startTimeText: a.startTimeText,
+        endTimeText: a.endTimeText,
+        address: a.address,
+      })),
+      completedAssignments: completedAssign.map((a) => ({
+        assignmentId: a.id,
+        serviceDateTS: a.serviceDateTS,
+        services: a.services,
+        elderName: a.elderName,
+        volunteerName: a.volunteerName,
+        volunteerEmail: a.volunteerEmail,
+        startTimeText: a.startTimeText,
+        endTimeText: a.endTimeText,
+        receipt: a.receipt ?? null,
+      })),
+    });
+  };
 
   const toMinutes = (t?: string | null) => {
     if (!t) return null;
@@ -293,6 +326,7 @@ const ElderHome = () => {
         cancelledAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
+      await deletePendingServiceRequestNotifications(db, cancelTarget.id);
       setCancelTarget(null);
       setCancelOther("");
       setCancelReason("schedule_change");
@@ -303,6 +337,13 @@ const ElderHome = () => {
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-background to-muted/20">
+      <ReportDateRangeDialog
+        open={reportRangeOpen}
+        onOpenChange={setReportRangeOpen}
+        onConfirm={(range) => void runGuardianReport(range)}
+        title="Download guardian report"
+        description="Pending rows use service date, or submission date if no service date is set. Visits use the scheduled service date. Default is the last 30 days."
+      />
       <ElderNavbar />
       
       {/* Hero Section */}
@@ -333,56 +374,7 @@ const ElderHome = () => {
                     Request Service
                   </Button>
                 </Link>
-                <Button size="lg" variant="outline" className="gap-2" onClick={async () => {
-                  const uid = user?.id;
-                  if (!uid) return;
-                  const [reqSnap, assignSnap] = await Promise.all([
-                    getDocs(query(collection(db, "serviceRequests"), where("userId", "==", uid))),
-                    getDocs(query(collection(db, "assignments"), where("elderUserId", "==", uid))),
-                  ]);
-                  const allRequests = reqSnap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
-                  const allAssignments = assignSnap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
-                  const pendingReqs = allRequests.filter((r) => (r.status || "pending") === "pending");
-                  const getTs = (a: any) => typeof a.serviceDateTS === "number" ? a.serviceDateTS : (a.serviceDateTS?.toMillis?.() ?? 0);
-                  const upcomingAssign = allAssignments
-                    .filter((a) => a.status !== "completed" && a.status !== "cancelled" && a.status !== "declined")
-                    .sort((a, b) => getTs(a) - getTs(b));
-                  const completedAssign = allAssignments
-                    .filter((a) => a.status === "completed" || a.guardianConfirmed)
-                    .sort((a, b) => getTs(b) - getTs(a));
-                  generateElderReport({
-                    guardianName: greetingName,
-                    pendingRequestsCount: pendingReqs.length,
-                    upcomingCount: upcomingAssign.length,
-                    completedCount: completedAssign.length,
-                    pendingRequests: pendingReqs.map((r) => ({
-                      services: r.services,
-                      serviceDateDisplay: r.serviceDateDisplay,
-                      serviceDateTS: r.serviceDateTS,
-                      startTimeText: r.startTimeText,
-                      endTimeText: r.endTimeText,
-                      status: r.status,
-                      createdAt: r.createdAt,
-                    })),
-                    upcomingAssignments: upcomingAssign.map((a) => ({
-                      serviceDateTS: a.serviceDateTS,
-                      services: a.services,
-                      volunteerName: a.volunteerName,
-                      volunteerEmail: a.volunteerEmail,
-                      startTimeText: a.startTimeText,
-                      endTimeText: a.endTimeText,
-                      address: a.address,
-                    })),
-                    completedAssignments: completedAssign.map((a) => ({
-                      serviceDateTS: a.serviceDateTS,
-                      services: a.services,
-                      volunteerName: a.volunteerName,
-                      volunteerEmail: a.volunteerEmail,
-                      startTimeText: a.startTimeText,
-                      endTimeText: a.endTimeText,
-                    })),
-                  });
-                }}>
+                <Button size="lg" variant="outline" className="gap-2" onClick={() => setReportRangeOpen(true)}>
                   <Download className="h-5 w-5" />
                   Download report
                 </Button>

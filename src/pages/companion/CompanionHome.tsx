@@ -1,43 +1,14 @@
-import { Link, useLocation } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { logout, getCurrentUser, subscribeToAuth, type AuthProfile } from "@/lib/auth";
-import logo from "@/assets/logo.png";
+import { getCurrentUser, subscribeToAuth, type AuthProfile } from "@/lib/auth";
+import { CompanionNavbar } from "@/components/companion/CompanionNavbar";
 import volunteerHero from "@/assets/volunteer-hero.jpg";
 import { useEffect, useMemo, useState } from "react";
-import { Calendar, ClipboardList, Clock, UserCheck, CheckCircle2, Bell, MapPin, Phone, Award, Heart, TrendingUp, Star, Download } from "lucide-react";
+import { Calendar, ClipboardList, Clock, UserCheck, CheckCircle2, Bell, MapPin, Phone, Award, Heart, TrendingUp, Star, Download, CalendarOff } from "lucide-react";
 import { db } from "@/lib/firebase";
 import { collection, onSnapshot, query, where } from "firebase/firestore";
-import { generateVolunteerReport } from "@/lib/report-utils";
-
-const CompanionNavbar = () => {
-  const user = getCurrentUser();
-  const location = useLocation();
-  const isActive = (path: string) => location.pathname === path;
-  return (
-    <nav className="bg-primary text-primary-foreground sticky top-0 z-50 shadow-md">
-      <div className="container mx-auto h-16 px-4 flex items-center justify-between">
-        <Link to="/companion" className="flex items-center gap-2" aria-label="ElderEase Companion Home" tabIndex={0}>
-          <img src={logo} alt="ElderEase Logo" className="h-8 w-8" />
-          <span className="text-lg font-bold">ElderEase Companion</span>
-        </Link>
-        <div className="hidden md:flex items-center gap-5" role="navigation" aria-label="Primary">
-          <Link to="/companion" className={`transition-opacity ${isActive("/companion") ? "font-semibold underline underline-offset-8 opacity-100" : "opacity-90 hover:opacity-100"}`}>Dashboard</Link>
-          <Link to="/companion/assignments" className={`transition-opacity ${isActive("/companion/assignments") ? "font-semibold underline underline-offset-8 opacity-100" : "opacity-90 hover:opacity-100"}`}>My Assignments</Link>
-          <Link to="/companion/requests" className={`transition-opacity ${isActive("/companion/requests") ? "font-semibold underline underline-offset-8 opacity-100" : "opacity-90 hover:opacity-100"}`}>Find Requests</Link>
-          <Link to="/companion/activity" className={`transition-opacity ${isActive("/companion/activity") ? "font-semibold underline underline-offset-8 opacity-100" : "opacity-90 hover:opacity-100"}`}>Activity Log</Link>
-          <Link to="/companion/profile" className="hover:opacity-80 transition-opacity" tabIndex={0}>Profile</Link>
-          {user ? (
-            <Button variant="nav" size="sm" onClick={() => { logout(); window.location.href = "/"; }} aria-label="Log out">Logout</Button>
-          ) : (
-            <Link to="/login">
-              <Button variant="nav" size="sm">Login</Button>
-            </Link>
-          )}
-        </div>
-      </div>
-    </nav>
-  );
-};
+import { generateVolunteerReport, isInDateRange } from "@/lib/report-utils";
+import { ReportDateRangeDialog, type ReportDateRangeConfirm } from "@/components/reports/ReportDateRangeDialog";
 
 const CompanionHome = () => {
   const user = useMemo(() => getCurrentUser(), []);
@@ -46,6 +17,7 @@ const CompanionHome = () => {
   const [assignments, setAssignments] = useState<any[]>([]);
   const [ratingAvg, setRatingAvg] = useState<number | null>(null);
   const [ratingCount, setRatingCount] = useState<number>(0);
+  const [reportRangeOpen, setReportRangeOpen] = useState(false);
 
   useEffect(() => {
     const unsub = subscribeToAuth((p: AuthProfile | null) => setEmail(p?.email?.toLowerCase() ?? null));
@@ -99,9 +71,55 @@ const CompanionHome = () => {
     return { label: "Starter", next: "Next: 10 hours or 5 services" };
   };
   const level = getLevel(totalCompletedHours, totalCompletedServices);
+
+  const runVolunteerReport = (range: ReportDateRangeConfirm) => {
+    const completed = assignments.filter(isCompletedConfirmed).filter((a) => isInDateRange(a.serviceDateTS, range.startMs, range.endMs));
+    const upcoming = assignments
+      .filter((a) => !(a.status === "completed" && a.guardianConfirmed))
+      .filter((a) => isInDateRange(a.serviceDateTS, range.startMs, range.endMs));
+    const periodHours = completed.reduce((acc, a) => acc + durationMinutes(a), 0) / 60;
+    const periodLevel = getLevel(periodHours, completed.length);
+    generateVolunteerReport({
+      dateRangeLabel: range.label,
+      volunteerName: displayName,
+      totalCompletedServices: completed.length,
+      totalCompletedHours: periodHours,
+      peopleHelped: Array.from(new Set(completed.map((a) => a.elderName).filter(Boolean))).length,
+      ratingAvg,
+      ratingCount,
+      levelLabel: periodLevel.label,
+      hoursThisWeek: periodHours,
+      upcomingThisWeek: upcoming.length,
+      completedAssignments: completed.map((a) => ({
+        assignmentId: a.id,
+        serviceDateTS: a.serviceDateTS,
+        elderName: a.elderName,
+        services: a.services,
+        startTimeText: a.startTimeText,
+        endTimeText: a.endTimeText,
+        durationMinutes: durationMinutes(a),
+        receipt: a.receipt ?? null,
+      })),
+      upcomingAssignments: upcoming.map((a) => ({
+        serviceDateTS: a.serviceDateTS,
+        elderName: a.elderName,
+        services: a.services,
+        startTimeText: a.startTimeText,
+        endTimeText: a.endTimeText,
+        status: a.status === "completed" && a.guardianConfirmed ? "Completed" : a.status || "Assigned",
+      })),
+    });
+  };
   
   return (
     <div className="min-h-screen bg-gradient-to-b from-background to-muted/20">
+      <ReportDateRangeDialog
+        open={reportRangeOpen}
+        onOpenChange={setReportRangeOpen}
+        onConfirm={runVolunteerReport}
+        title="Download volunteer report"
+        description="Assignments are included when their scheduled service date falls in this range. Average rating uses all reviews; other PDF stats, level, and tables use the selected range only."
+      />
       <CompanionNavbar />
 
       {/* Hero Section */}
@@ -132,37 +150,13 @@ const CompanionHome = () => {
                     Find Requests
                   </Button>
                 </Link>
-                <Button size="lg" variant="outline" className="gap-2" onClick={() => {
-                  const completed = assignments.filter(isCompletedConfirmed);
-                  const upcoming = assignments.filter((a) => !(a.status === "completed" && a.guardianConfirmed));
-                  generateVolunteerReport({
-                    volunteerName: displayName,
-                    totalCompletedServices,
-                    totalCompletedHours,
-                    peopleHelped,
-                    ratingAvg,
-                    ratingCount,
-                    levelLabel: level.label,
-                    hoursThisWeek,
-                    upcomingThisWeek: weekAssignments.length,
-                    completedAssignments: completed.map((a) => ({
-                      serviceDateTS: a.serviceDateTS,
-                      elderName: a.elderName,
-                      services: a.services,
-                      startTimeText: a.startTimeText,
-                      endTimeText: a.endTimeText,
-                      durationMinutes: durationMinutes(a),
-                    })),
-                    upcomingAssignments: upcoming.map((a) => ({
-                      serviceDateTS: a.serviceDateTS,
-                      elderName: a.elderName,
-                      services: a.services,
-                      startTimeText: a.startTimeText,
-                      endTimeText: a.endTimeText,
-                      status: a.status === "completed" && a.guardianConfirmed ? "Completed" : a.status || "Assigned",
-                    })),
-                  });
-                }}>
+                <Link to="/companion/time-off">
+                  <Button size="lg" variant="outline" className="gap-2">
+                    <CalendarOff className="h-5 w-5" />
+                    Time off
+                  </Button>
+                </Link>
+                <Button size="lg" variant="outline" className="gap-2" onClick={() => setReportRangeOpen(true)}>
                   <Download className="h-5 w-5" />
                   Download report
                 </Button>

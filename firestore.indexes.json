@@ -1,0 +1,13 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "volunteerLeave",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "startDayMs", "order": "ASCENDING" },
+        { "fieldPath": "endDayMs", "order": "ASCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}
