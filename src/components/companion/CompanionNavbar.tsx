@@ -24,6 +24,11 @@ const AccountMenu = () => {
     profile?.email?.split("@")[0] ||
     user?.name ||
     "Volunteer";
+  const menuFirstName =
+    profile?.displayName?.trim().split(/\s+/)[0] ||
+    user?.name?.trim().split(/\s+/)[0] ||
+    profile?.email?.split("@")[0] ||
+    "Volunteer";
   const email = profile?.email ?? null;
 
   if (!user) {
@@ -47,9 +52,9 @@ const AccountMenu = () => {
             "transition-opacity opacity-90 hover:opacity-100",
             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-foreground/40 focus-visible:ring-offset-2 focus-visible:ring-offset-primary rounded-sm"
           )}
-          aria-label="Account menu"
+          aria-label={`${menuFirstName} account menu`}
         >
-          Account
+          <span className="max-w-[10rem] truncate">{menuFirstName}</span>
           <ChevronDown className="h-4 w-4 shrink-0 opacity-80" aria-hidden />
         </button>
       </DropdownMenuTrigger>

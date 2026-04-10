@@ -670,7 +670,7 @@ const FindRequests = () => {
                   <span>{trimmedDeclineReasonLen} characters</span>
                 ) : (
                   <span className="text-amber-700 dark:text-amber-500/90">
-                    {trimmedDeclineReasonLen} / {MIN_DECLINE_REASON_LENGTH} minimum
+                    {MIN_DECLINE_REASON_LENGTH} minimum characters
                     {trimmedDeclineReasonLen > 0
                       ? ` — ${MIN_DECLINE_REASON_LENGTH - trimmedDeclineReasonLen} more needed`
                       : ""}
