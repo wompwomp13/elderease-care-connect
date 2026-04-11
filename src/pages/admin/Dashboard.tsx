@@ -3,7 +3,7 @@ import AdminLayout from "@/components/layout/AdminLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
-  Users, ClipboardList, Star, Award, ChevronRight, ChevronLeft,
+  Users, ClipboardList, Star, Award, ChevronRight, X,
   ArrowUpRight, ArrowDownRight, User as UserIcon, Lightbulb,
   Download, AlertTriangle, CheckCircle2, TrendingUp, TrendingDown,
   Minus,
@@ -131,6 +131,15 @@ const Dashboard = () => {
   const [forecastMethod, setForecastMethod] = useState<ForecastMethod>("trend");
   const [adminReportRangeOpen, setAdminReportRangeOpen] = useState(false);
   const [forecastSidebarOpen, setForecastSidebarOpen] = useState(false);
+
+  useEffect(() => {
+    if (!forecastSidebarOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setForecastSidebarOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [forecastSidebarOpen]);
 
   // --- Live Firestore collections ---
   const [requests, setRequests] = useState<any[] | null>(null);
@@ -1345,91 +1354,61 @@ const Dashboard = () => {
         description="Charts and summary figures match the live dashboard. The request log is filtered by when each request was submitted; completed history uses the service date."
       />
 
-      {/* Right-edge forecast sidebar — same pattern on all breakpoints */}
+      {/* Forecast controls: floating launcher (bottom-right, chat-style) */}
       {forecastSidebarOpen && (
         <button
           type="button"
-          className="fixed inset-0 z-30 bg-background/50 backdrop-blur-[2px] md:hidden"
-          aria-label="Close forecast panel"
+          className="fixed inset-0 z-40 bg-background/45 backdrop-blur-[2px]"
+          aria-label="Close forecast settings"
           onClick={() => setForecastSidebarOpen(false)}
         />
       )}
-      <aside
-        id="forecast-settings-sidebar"
+      <div
         className={cn(
-          "fixed z-40 flex flex-col border-l-2 border-primary/25 bg-background/95 shadow-[-4px_0_24px_-4px_rgba(0,0,0,0.12)] backdrop-blur-md",
-          "top-16 right-0 bottom-0 transition-[width] duration-300 ease-out",
-          forecastSidebarOpen
-            ? "w-[min(20rem,calc(100vw-1.5rem))] sm:w-80"
-            : "w-16 sm:w-[4.5rem]"
+          "fixed z-50 flex flex-col items-end gap-2 pointer-events-none",
+          "bottom-[max(1rem,env(safe-area-inset-bottom,0px))] right-[max(1rem,env(safe-area-inset-right,0px))]"
         )}
-        aria-label="Forecast settings"
       >
-        {!forecastSidebarOpen ? (
-          <button
-            type="button"
-            onClick={() => setForecastSidebarOpen(true)}
-            className="group relative flex h-full w-full flex-col items-center justify-center border-0 bg-primary/5 px-1 py-6 text-foreground hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
-            aria-expanded="false"
-            aria-controls="forecast-sidebar-panel"
-          >
-            <ChevronLeft
-              className="pointer-events-none absolute right-1 top-2 h-5 w-5 shrink-0 text-primary/80 group-hover:text-primary"
-              aria-hidden
-            />
-            <span className="sr-only">Open forecast settings sidebar</span>
-            <div className="flex flex-col items-center justify-center gap-4 pt-6">
-              <Settings2
-                className="h-8 w-8 shrink-0 text-primary transition-transform group-hover:scale-110"
-                aria-hidden
-              />
-              <span
-                className="select-none text-sm font-bold uppercase leading-none tracking-wide text-primary [writing-mode:vertical-rl] rotate-180"
-                aria-hidden
-              >
-                Forecast
-              </span>
-            </div>
-          </button>
-        ) : (
+        {forecastSidebarOpen && (
           <div
             id="forecast-sidebar-panel"
-            className="flex h-full min-h-0 flex-col"
-            role="region"
+            role="dialog"
+            aria-modal="true"
             aria-labelledby="forecast-sidebar-title"
+            className="pointer-events-auto mb-1 flex max-h-[min(32rem,calc(100dvh-5.5rem))] w-[min(20rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-xl border bg-card text-card-foreground shadow-2xl ring-1 ring-border/50"
+            onClick={(e) => e.stopPropagation()}
           >
-            <div className="relative shrink-0 border-b bg-primary/5 px-4 py-5">
+            <div className="flex shrink-0 items-center justify-between gap-2 border-b bg-muted/40 px-3 py-2.5">
+              <div className="flex min-w-0 items-center gap-2">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/15">
+                  <Settings2 className="h-4 w-4 text-primary" aria-hidden />
+                </div>
+                <div className="min-w-0">
+                  <h2 id="forecast-sidebar-title" className="truncate text-sm font-semibold">
+                    Forecast settings
+                  </h2>
+                  <p className="truncate text-xs text-muted-foreground">
+                    All forecast charts use these options
+                  </p>
+                </div>
+              </div>
               <Button
                 type="button"
                 variant="ghost"
                 size="icon"
-                className="absolute right-2 top-2 z-10 h-9 w-9 shrink-0"
+                className="h-8 w-8 shrink-0"
                 onClick={() => setForecastSidebarOpen(false)}
-                aria-label="Collapse forecast sidebar"
+                aria-label="Close forecast settings"
               >
-                <ChevronRight className="h-5 w-5" />
+                <X className="h-4 w-4" />
               </Button>
-              <div className="mx-auto flex max-w-[16rem] flex-col items-center justify-center gap-2 px-2 text-center">
-                <div className="flex h-11 w-11 items-center justify-center rounded-full bg-primary/15">
-                  <Settings2 className="h-6 w-6 text-primary" aria-hidden />
-                </div>
-                <h2 id="forecast-sidebar-title" className="text-lg font-bold leading-tight sm:text-xl">
-                  Forecast settings
-                </h2>
-                <p className="text-sm text-muted-foreground">
-                  Adjust how predictions are calculated
-                </p>
-              </div>
             </div>
-            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-5">
-              <div className="mx-auto flex w-full max-w-[17.5rem] flex-col items-center space-y-5">
-                <p className="text-center text-sm text-muted-foreground leading-relaxed">
-                  These controls apply to every forecast chart on the dashboard.
-                </p>
-                <div className="flex w-full flex-col items-center gap-2">
-                  <span className="text-center text-sm font-semibold text-foreground">History</span>
-                  <p className="text-center text-xs text-muted-foreground">
-                    How many past months of data to use
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-4">
+              <div className="mx-auto flex w-full flex-col gap-5">
+                <div className="flex w-full flex-col gap-2">
+                  <span className="text-sm font-semibold text-foreground">History</span>
+                  <p className="text-xs text-muted-foreground">
+                    Past months of data used for the model
                   </p>
                   <div className="flex w-full rounded-md border bg-muted/50 p-0.5">
                     {([3, 6, 12] as const).map((n) => (
@@ -1438,7 +1417,7 @@ const Dashboard = () => {
                         type="button"
                         onClick={() => setForecastWindow(n)}
                         className={cn(
-                          "flex-1 px-2 py-2 text-sm font-semibold sm:text-base rounded",
+                          "flex-1 rounded px-2 py-2 text-sm font-semibold",
                           forecastWindow === n
                             ? "bg-background shadow-sm"
                             : "text-muted-foreground hover:text-foreground"
@@ -1449,12 +1428,12 @@ const Dashboard = () => {
                     ))}
                   </div>
                 </div>
-                <div className="flex w-full flex-col items-center gap-2">
-                  <span className="text-center text-sm font-semibold text-foreground">
+                <div className="flex w-full flex-col gap-2">
+                  <span className="text-sm font-semibold text-foreground">
                     How far ahead to predict
                   </span>
-                  <p className="text-center text-xs text-muted-foreground">
-                    Number of future months to show on forecast lines
+                  <p className="text-xs text-muted-foreground">
+                    Future months on forecast lines
                   </p>
                   <div className="flex w-full rounded-md border bg-muted/50 p-0.5">
                     {([1, 2, 3] as const).map((n) => (
@@ -1463,7 +1442,7 @@ const Dashboard = () => {
                         type="button"
                         onClick={() => setForecastHorizon(n)}
                         className={cn(
-                          "flex-1 px-2 py-2 text-sm font-semibold sm:text-base rounded",
+                          "flex-1 rounded px-2 py-2 text-sm font-semibold",
                           forecastHorizon === n
                             ? "bg-background shadow-sm"
                             : "text-muted-foreground hover:text-foreground"
@@ -1474,10 +1453,10 @@ const Dashboard = () => {
                     ))}
                   </div>
                 </div>
-                <div className="flex w-full flex-col items-center gap-2">
-                  <span className="text-center text-sm font-semibold text-foreground">Method</span>
-                  <p className="text-center text-xs text-muted-foreground">
-                    Trend follows direction of recent data; Average repeats a typical month
+                <div className="flex w-full flex-col gap-2">
+                  <span className="text-sm font-semibold text-foreground">Method</span>
+                  <p className="text-xs text-muted-foreground">
+                    Trend follows recent direction; Average repeats a typical month
                   </p>
                   <div className="flex w-full rounded-md border bg-muted/50 p-0.5">
                     {(["trend", "average"] as const).map((m) => (
@@ -1486,7 +1465,7 @@ const Dashboard = () => {
                         type="button"
                         onClick={() => setForecastMethod(m)}
                         className={cn(
-                          "flex-1 px-2 py-2 text-sm font-semibold sm:text-base rounded capitalize",
+                          "flex-1 rounded px-2 py-2 text-sm font-semibold capitalize",
                           forecastMethod === m
                             ? "bg-background shadow-sm"
                             : "text-muted-foreground hover:text-foreground"
@@ -1501,7 +1480,29 @@ const Dashboard = () => {
             </div>
           </div>
         )}
-      </aside>
+        <Button
+          type="button"
+          size="icon"
+          onClick={() => setForecastSidebarOpen((o) => !o)}
+          className={cn(
+            "pointer-events-auto h-14 w-14 rounded-full shadow-lg",
+            "border-2 border-primary-foreground/20",
+            forecastSidebarOpen && "ring-2 ring-ring ring-offset-2 ring-offset-background"
+          )}
+          aria-expanded={forecastSidebarOpen}
+          aria-controls="forecast-sidebar-panel"
+          title={forecastSidebarOpen ? "Close forecast settings" : "Forecast settings"}
+        >
+          {forecastSidebarOpen ? (
+            <X className="h-6 w-6" aria-hidden />
+          ) : (
+            <Settings2 className="h-6 w-6" aria-hidden />
+          )}
+          <span className="sr-only">
+            {forecastSidebarOpen ? "Close forecast settings" : "Open forecast settings"}
+          </span>
+        </Button>
+      </div>
 
       <div className="space-y-6">
         <div>
@@ -1533,7 +1534,9 @@ const Dashboard = () => {
             {forecastHorizon > 1 ? "s" : ""} ahead ·{" "}
             <span className="font-bold text-foreground uppercase">{forecastMethod}</span>
             {" · "}
-            <span className="text-xs">Use the forecast sidebar on the right to adjust.</span>
+            <span className="text-xs">
+              Use the forecast button (bottom-right) to adjust.
+            </span>
           </p>
 
           {/* ══════════════════════════════════════════════════════════════════
