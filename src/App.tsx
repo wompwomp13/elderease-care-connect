@@ -20,6 +20,7 @@ import BrowseServices from "@/pages/elder/BrowseServices";
 import PaymentConfirmation from "@/pages/elder/PaymentConfirmation";
 import MySchedule from "@/pages/elder/MySchedule";
 import ElderProfile from "@/pages/elder/ElderProfile";
+import AdminGate from "@/components/admin/AdminGate";
 import Dashboard from "@/pages/admin/Dashboard";
 import VolunteerApplications from "@/pages/admin/VolunteerApplications";
 import VolunteerList from "@/pages/admin/VolunteerList";
@@ -57,10 +58,12 @@ const App = () => (
             <Route path="payment-confirmation" element={<PaymentConfirmation />} />
             <Route path="profile" element={<ElderProfile />} />
           </Route>
-          <Route path="/admin" element={<Dashboard />} />
-          <Route path="/admin/applications" element={<VolunteerApplications />} />
-          <Route path="/admin/volunteers" element={<VolunteerList />} />
-          <Route path="/admin/requests" element={<ServiceRequests />} />
+          <Route path="/admin" element={<AdminGate />}>
+            <Route index element={<Dashboard />} />
+            <Route path="applications" element={<VolunteerApplications />} />
+            <Route path="volunteers" element={<VolunteerList />} />
+            <Route path="requests" element={<ServiceRequests />} />
+          </Route>
           
           <Route path="/companion" element={<CompanionGate />}>
             <Route index element={<CompanionHome />} />
