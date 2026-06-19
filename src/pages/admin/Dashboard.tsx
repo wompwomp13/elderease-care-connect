@@ -22,6 +22,7 @@ import {
 } from "@/lib/forecast";
 import { generateAdminReport, isInDateRange } from "@/lib/report-utils";
 import { ReportDateRangeDialog, type ReportDateRangeConfirm } from "@/components/reports/ReportDateRangeDialog";
+import { ChartLegend } from "@/components/charts/ChartLegend";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -53,11 +54,15 @@ type TooltipPayloadEntry = {
 /** Set as name= on every forecast uncertainty <Area> so tooltips can hide them reliably. */
 const FORECAST_BAND_AREA_NAME = "__forecastRangeBand";
 
-/** Stacked Area series used only for the shaded forecast band — omit from tooltips. */
+/**
+ * Helper Recharts series (shaded forecast bands, gradient fills under lines) carry
+ * a name starting with "__" so they render visually but never show up in tooltips.
+ */
 function isForecastBandPayloadEntry(p: TooltipPayloadEntry): boolean {
   if (p.name === FORECAST_BAND_AREA_NAME) return true;
   const dk = String(p.dataKey ?? "").toLowerCase();
   const nm = String(p.name ?? "").toLowerCase();
+  if (nm.startsWith("__")) return true;
   return (
     dk.includes("bandlow") ||
     dk.includes("banddiff") ||
@@ -69,6 +74,18 @@ function isForecastBandPayloadEntry(p: TooltipPayloadEntry): boolean {
 }
 
 /** Tooltip that hides internal band series so users only see actual + forecast lines. */
+/** Shared tight chart margin — axis titles are conveyed by the card heading instead. */
+const CHART_MARGIN = { top: 8, right: 12, left: 4, bottom: 4 } as const;
+
+/** Care categories tracked across demand analytics, each with a distinct chart colour. */
+const SERVICE_CATEGORIES = [
+  { id: "companionship", label: "Companionship", color: "hsl(199 89% 48%)" },
+  { id: "housekeeping", label: "Housekeeping", color: "hsl(36 82% 52%)" },
+  { id: "errands", label: "Errands", color: "hsl(340 72% 58%)" },
+  { id: "visits", label: "Home visits", color: "hsl(265 60% 60%)" },
+  { id: "socialization", label: "Socialization", color: "hsl(150 55% 42%)" },
+] as const;
+
 function BandAwareTooltip({
   active,
   payload,
@@ -81,7 +98,7 @@ function BandAwareTooltip({
   labelPrefix?: string;
 }) {
   if (!active || !payload?.length) return null;
-  const rows = payload.filter((p) => !isForecastBandPayloadEntry(p));
+  const rows = payload.filter((p) => !isForecastBandPayloadEntry(p) && p.value != null);
   if (!rows.length) return null;
   const header =
     labelPrefix != null && labelPrefix !== "" ? `${labelPrefix}: ${label}` : String(label ?? "");
@@ -450,8 +467,6 @@ const Dashboard = () => {
       fcBandDiff: null as number | null,
     }));
     if (built.insufficient || !built.forecast) return historical;
-    const lastHist = historical[historical.length - 1];
-    if (lastHist) lastHist.forecast = lastHist.services;
     const cur2 = new Date(now);
     const nextMonths = built.forecast.map((val, i) => {
       const d = new Date(cur2.getFullYear(), cur2.getMonth() + i + 1, 1);
@@ -498,8 +513,6 @@ const Dashboard = () => {
       fcBandDiff: null as number | null,
     }));
     if (built.insufficient || !built.forecast) return historical;
-    const lastHist = historical[historical.length - 1];
-    if (lastHist) lastHist.forecast = lastHist.services;
     const cur2 = new Date(now);
     const nextMonths = built.forecast.map((val, i) => {
       const d = new Date(cur2.getFullYear(), cur2.getMonth() + i + 1, 1);
@@ -648,16 +661,23 @@ const Dashboard = () => {
       }
     }
 
+    const approvedEmailSet = new Set(
+      (approvedVolunteers || []).map((v) => (v.email || "").toLowerCase()).filter(Boolean)
+    );
     const byEmailByBucket: Record<string, number[]> = {};
     topVolunteers.forEach((v) => { byEmailByBucket[v.emailKey] = chartBuckets.map(() => 0); });
+    // Aggregate completed services across every approved volunteer (the whole pool),
+    // independent of the top-3 individual tallies.
+    const allByBucket: number[] = chartBuckets.map(() => 0);
     (assignments || []).forEach((a) => {
       if (!isCompletedConfirmed(a)) return;
       const ms = getDateMs(a);
       if (!ms) return;
       const email = (a.volunteerEmail || "").toLowerCase();
-      if (!byEmailByBucket[email]) return;
       const idx = chartBuckets.findIndex((b) => ms >= b.startMs && ms < b.endMs);
-      if (idx >= 0) byEmailByBucket[email][idx] += 1;
+      if (idx < 0) return;
+      if (approvedEmailSet.has(email)) allByBucket[idx] += 1;
+      if (byEmailByBucket[email]) byEmailByBucket[email][idx] += 1;
     });
 
     const top3 = topVolunteers.slice(0, 3);
@@ -679,15 +699,24 @@ const Dashboard = () => {
       else topThreeForecastSum += Math.round(b.forecast[0]);
     });
 
+    // All-caretakers (whole approved pool) forecast — the primary series + summary metric.
+    const allForecast = buildForecastSeries(
+      allByBucket, forecastWindow, forecastHorizon, forecastMethod
+    );
+    const allForecastInsufficient = allForecast.insufficient || !allForecast.forecast;
+    const allNextForecast = !allForecastInsufficient
+      ? Math.round((allForecast.forecast as number[])[0])
+      : null;
+
     // Historical chart rows (bands null for historical)
     const trendChartDataBase = chartBuckets.map((b, idx) => {
-      const row: Record<string, string | number | null> = { label: b.label };
-      top3.forEach((v) => {
-        row[`v_${v.id}`] = byEmailByBucket[v.emailKey]?.[idx] ?? 0;
-        row[`v_${v.id}_fc`] = null;
-        row[`v_${v.id}_bandLow`] = null;
-        row[`v_${v.id}_bandDiff`] = null;
-      });
+      const row: Record<string, string | number | null> = {
+        label: b.label,
+        allActual: allByBucket[idx] ?? 0,
+        allFc: null,
+        allBandLow: null,
+        allBandDiff: null,
+      };
       return row;
     });
 
@@ -707,43 +736,31 @@ const Dashboard = () => {
         const nd = new Date(d.getFullYear(), d.getMonth() + step + 1, 1);
         label = nd.toLocaleString(undefined, { month: "short", year: "2-digit" });
       }
-      const row: Record<string, string | number | null> = { label };
-      top3.forEach((v) => {
-        row[`v_${v.id}`] = null;
-        const b = forecastByVolunteerId[v.id];
-        const p = b.forecast?.[step];
-        row[`v_${v.id}_fc`] = !b.insufficient && p != null ? Math.round(p) : null;
-        const low = b.low?.[step] ?? null;
-        const high = b.high?.[step] ?? null;
-        row[`v_${v.id}_bandLow`] =
-          !b.insufficient && low != null ? low : null;
-        row[`v_${v.id}_bandDiff`] =
-          !b.insufficient && low != null && high != null
-            ? Math.max(0, high - low)
-            : null;
-      });
+      const allLow = allForecast.low?.[step] ?? null;
+      const allHigh = allForecast.high?.[step] ?? null;
+      const allStep = allForecast.forecast?.[step];
+      const row: Record<string, string | number | null> = {
+        label,
+        allActual: null,
+        allFc:
+          !allForecastInsufficient && allStep != null ? Math.round(allStep) : null,
+        allBandLow: !allForecastInsufficient && allLow != null ? allLow : null,
+        allBandDiff:
+          !allForecastInsufficient && allLow != null && allHigh != null
+            ? Math.max(0, allHigh - allLow)
+            : null,
+      };
       forecastRows.push(row);
-    }
-
-    // Connection point at last historical bucket
-    const lastBase = trendChartDataBase[trendChartDataBase.length - 1];
-    if (lastBase) {
-      top3.forEach((v) => {
-        const b = forecastByVolunteerId[v.id];
-        if (!b.insufficient && b.forecast) {
-          lastBase[`v_${v.id}_fc`] = lastBase[`v_${v.id}`];
-        }
-      });
     }
 
     const trendChartData = [...trendChartDataBase, ...forecastRows];
 
     const chartTitle =
       volunteerPeriodFilter === "weekly"
-        ? "Top 3 volunteers – services per week (last 6 weeks)"
+        ? "Caretaker services per week (all caretakers, last 6 weeks)"
         : volunteerPeriodFilter === "yearly"
-          ? "Top 3 volunteers – services per year (last 4 years)"
-          : "Top 3 volunteers – services per month (last 6 months)";
+          ? "Caretaker services per year (all caretakers, last 4 years)"
+          : "Caretaker services per month (all caretakers, last 6 months)";
     const chartXLabel =
       volunteerPeriodFilter === "weekly"
         ? "Week"
@@ -788,6 +805,8 @@ const Dashboard = () => {
       trendChartData,
       topThreeForecastSum,
       topThreeForecastInsufficient,
+      allForecastInsufficient,
+      allNextForecast,
       periodLabel:
         volunteerPeriodFilter === "weekly"
           ? "7 days"
@@ -833,6 +852,46 @@ const Dashboard = () => {
       default: return id?.charAt(0).toUpperCase() + id?.slice(1);
     }
   };
+
+  // ─── Service demand by type (non-cancelled requests, by month) ───────────────
+  // Counts each request once per care type it includes, so totals reflect service
+  // demand (a 2-service request adds to both categories).
+  const serviceMixTrend = useMemo(() => {
+    const cur = new Date(now);
+    const months: { label: string; key: string; counts: Record<string, number> }[] = [];
+    for (let i = forecastWindow - 1; i >= 0; i--) {
+      const d = new Date(cur.getFullYear(), cur.getMonth() - i, 1);
+      months.push({
+        label: d.toLocaleString(undefined, { month: "short", year: "2-digit" }),
+        key: `${d.getFullYear()}-${d.getMonth()}`,
+        counts: {},
+      });
+    }
+    (requests || []).forEach((r) => {
+      if (r.status === "cancelled") return;
+      const ms = getRequestCreatedMs(r);
+      if (!ms) return;
+      const d = new Date(ms);
+      const idx = months.findIndex((m) => m.key === `${d.getFullYear()}-${d.getMonth()}`);
+      if (idx < 0) return;
+      const arr: string[] = Array.isArray(r.services) ? r.services : r.service ? [r.service] : [];
+      const ids = new Set(arr.map((s) => toServiceId(s)));
+      ids.forEach((id) => {
+        months[idx].counts[id] = (months[idx].counts[id] || 0) + 1;
+      });
+    });
+    const chartData = months.map((m) => {
+      const row: Record<string, string | number> = { month: m.label };
+      SERVICE_CATEGORIES.forEach((c) => { row[c.id] = m.counts[c.id] || 0; });
+      return row;
+    });
+    const catTotals = SERVICE_CATEGORIES.map((c) => ({
+      ...c,
+      total: chartData.reduce((s, r) => s + (r[c.id] as number), 0),
+    })).sort((a, b) => b.total - a.total);
+    const totalDemand = catTotals.reduce((s, c) => s + c.total, 0);
+    return { chartData, totalDemand, hasAny: totalDemand > 0, topCategory: catTotals[0] };
+  }, [requests, forecastWindow]);
 
   // ─── Capacity vs demand (1a fix: demand = non-cancelled by createdAt) ────────
 
@@ -1113,8 +1172,6 @@ const Dashboard = () => {
       const hist: CancelRow[] = months.map(({ month, cancelled }) => ({
         month, cancelled, cancelledFc: null, fcBandLow: null, fcBandDiff: null,
       }));
-      const lastH = hist[hist.length - 1];
-      if (lastH) lastH.cancelledFc = lastH.cancelled;
       const fcRows: CancelRow[] = cancelBuilt.forecast.map((val, i) => {
         const d = new Date(cur.getFullYear(), cur.getMonth() + i + 1, 1);
         const low = cancelBuilt.low?.[i] ?? null;
@@ -1158,6 +1215,12 @@ const Dashboard = () => {
       total: cancelledInPeriod.length,
       rate,
       totalInPeriod,
+      periodLabel:
+        cancelPeriodFilter === "weekly"
+          ? "7 days"
+          : cancelPeriodFilter === "monthly"
+            ? "30 days"
+            : "12 months",
       reasonData,
       chartData: cancellationChartData,
       cancellationForecastInsufficient: cancelBuilt.insufficient,
@@ -1335,12 +1398,6 @@ const Dashboard = () => {
         ? "bg-background text-foreground shadow-sm"
         : "text-muted-foreground hover:text-foreground"
     );
-
-  const volunteerColors = [
-    "hsl(var(--primary))",
-    "hsl(var(--primary-dark))",
-    "hsl(198 63% 69%)",
-  ] as const;
 
   // ─── Render ──────────────────────────────────────────────────────────────────
 
@@ -1987,41 +2044,58 @@ const Dashboard = () => {
                   </div>
                   <div className="min-h-[200px] space-y-2">
                     <h4 className="text-sm font-medium">Pending by month</h4>
+                    {pendingByPeriod.total === 0 ? (
+                      <div className="flex h-[200px] items-center justify-center rounded-lg border border-dashed text-sm text-muted-foreground">
+                        No pending requests in this window.
+                      </div>
+                    ) : (
                     <ResponsiveContainer width="100%" height={200}>
-                      <BarChart
-                        data={pendingByPeriod.chartData}
-                        margin={{ top: 40, right: 10, left: 60, bottom: 25 }}
-                      >
-                        <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                      <BarChart data={pendingByPeriod.chartData} margin={CHART_MARGIN}>
+                        <defs>
+                          <linearGradient id="barPending" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor="hsl(var(--primary))" stopOpacity={0.95} />
+                            <stop offset="100%" stopColor="hsl(var(--primary))" stopOpacity={0.55} />
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid
+                          strokeDasharray="3 3"
+                          vertical={false}
+                          stroke="hsl(var(--border))"
+                          strokeOpacity={0.6}
+                        />
                         <XAxis
                           dataKey="month"
                           stroke="hsl(var(--muted-foreground))"
                           fontSize={11}
-                          label={{ value: "Month", position: "insideBottom", offset: -5 }}
+                          tickLine={false}
+                          axisLine={{ stroke: "hsl(var(--border))" }}
+                          dy={4}
                         />
                         <YAxis
                           stroke="hsl(var(--muted-foreground))"
                           fontSize={11}
-                          label={{
-                            value: "Pending requests",
-                            angle: -90,
-                            position: "insideLeft",
-                            dy: 60,
-                          }}
+                          width={32}
+                          tickLine={false}
+                          axisLine={false}
+                          allowDecimals={false}
                         />
                         <Tooltip
+                          cursor={{ fill: "hsl(var(--primary))", fillOpacity: 0.06 }}
                           contentStyle={CHART_TOOLTIP_STYLE}
                           labelFormatter={(l) => `Month: ${l}`}
                           formatter={(v: number) => [v, "Pending requests"]}
                         />
                         <Bar
                           dataKey="pending"
-                          fill="hsl(var(--primary))"
+                          fill="url(#barPending)"
                           name="Pending requests"
-                          radius={[4, 4, 0, 0]}
+                          radius={[6, 6, 0, 0]}
+                          maxBarSize={56}
+                          minPointSize={2}
                         />
                       </BarChart>
                     </ResponsiveContainer>
+                    )}
                   </div>
                 </div>
               </CardContent>
@@ -2065,29 +2139,40 @@ const Dashboard = () => {
                   const hasForecast = data.some((r) => r.forecast != null);
                   return (
                     <>
+                      <div className="flex flex-col gap-4 lg:flex-row lg:items-center">
+                        <div className="min-w-0 flex-1">
                       <ResponsiveContainer width="100%" height={240}>
-                        <ComposedChart
-                          data={data}
-                          margin={{ top: 40, right: 10, left: 60, bottom: 25 }}
-                        >
-                          <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                        <ComposedChart data={data} margin={CHART_MARGIN}>
+                          <defs>
+                            <linearGradient id="fillMonthlyActual" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="0%" stopColor="hsl(var(--primary))" stopOpacity={0.26} />
+                              <stop offset="100%" stopColor="hsl(var(--primary))" stopOpacity={0} />
+                            </linearGradient>
+                          </defs>
+                          <CartesianGrid
+                            strokeDasharray="3 3"
+                            vertical={false}
+                            stroke="hsl(var(--border))"
+                            strokeOpacity={0.6}
+                          />
                           <XAxis
                             dataKey="month"
                             stroke="hsl(var(--muted-foreground))"
                             fontSize={12}
-                            label={{ value: "Month", position: "insideBottom", offset: -5 }}
+                            tickLine={false}
+                            axisLine={{ stroke: "hsl(var(--border))" }}
+                            dy={4}
                           />
                           <YAxis
                             stroke="hsl(var(--muted-foreground))"
                             fontSize={12}
-                            label={{
-                              value: yLabel,
-                              angle: -90,
-                              position: "insideLeft",
-                              dy: 80,
-                            }}
+                            width={32}
+                            tickLine={false}
+                            axisLine={false}
+                            allowDecimals={false}
                           />
                           <Tooltip
+                            cursor={{ stroke: "hsl(var(--primary))", strokeOpacity: 0.25, strokeWidth: 1.5 }}
                             content={(props) => (
                               <BandAwareTooltip
                                 {...props}
@@ -2121,13 +2206,26 @@ const Dashboard = () => {
                             legendType="none"
                             connectNulls={false}
                           />
+                          {/* Soft gradient fill under the actual line (display only) */}
+                          <Area
+                            type="monotone"
+                            name="__monthlyActualFill"
+                            dataKey="services"
+                            stroke="none"
+                            fill="url(#fillMonthlyActual)"
+                            dot={false}
+                            activeDot={false}
+                            legendType="none"
+                            connectNulls={false}
+                          />
                           <Line
                             type="monotone"
                             dataKey="services"
                             name="Actual"
                             stroke="hsl(var(--primary))"
-                            strokeWidth={2}
-                            dot={{ fill: "hsl(var(--primary))", r: 3 }}
+                            strokeWidth={2.5}
+                            dot={{ fill: "hsl(var(--primary))", r: 3, strokeWidth: 0 }}
+                            activeDot={{ r: 5, strokeWidth: 2, stroke: "hsl(var(--background))" }}
                             connectNulls={false}
                           />
                           <Line
@@ -2135,22 +2233,32 @@ const Dashboard = () => {
                             dataKey="forecast"
                             name="Forecast"
                             stroke="hsl(var(--primary))"
-                            strokeWidth={2}
+                            strokeWidth={2.5}
                             strokeDasharray="6 4"
                             dot={{ fill: "hsl(var(--primary))", r: 2 }}
+                            activeDot={{ r: 5, strokeWidth: 2, stroke: "hsl(var(--background))" }}
                             connectNulls
                           />
                         </ComposedChart>
                       </ResponsiveContainer>
-                      <div className="flex justify-end gap-4 mt-2 text-xs text-muted-foreground">
-                        <span className="flex items-center gap-1.5">
-                          <span className="inline-block w-4 border-b-2 border-primary" />
-                          Actual
-                        </span>
-                        <span className="flex items-center gap-1.5">
-                          <span className="inline-block w-4 border-b-2 border-primary border-dashed" />
-                          Forecast
-                        </span>
+                        </div>
+                        <ChartLegend
+                          orientation="vertical"
+                          title={yLabel}
+                          className="lg:w-44 lg:shrink-0"
+                          items={[
+                            {
+                              label: "Actual",
+                              color: "hsl(var(--primary))",
+                              variant: "solid",
+                            },
+                            hasForecast && {
+                              label: "Forecast",
+                              color: "hsl(var(--primary))",
+                              variant: "dashed",
+                            },
+                          ]}
+                        />
                       </div>
                       {!hasForecast && (
                         <p className="text-xs text-muted-foreground mt-2">
@@ -2161,6 +2269,104 @@ const Dashboard = () => {
                     </>
                   );
                 })()}
+              </CardContent>
+            </Card>
+
+            {/* Service demand by type — stacked care-category mix */}
+            <Card className="shadow-lg border-0">
+              <CardHeader>
+                <CardTitle className="text-lg">Service demand by type</CardTitle>
+                <p className="text-sm text-muted-foreground">
+                  Non-cancelled requests by care type, by month (last {forecastWindow} months).
+                  A request counts once per service it includes.
+                </p>
+              </CardHeader>
+              <CardContent>
+                {!serviceMixTrend.hasAny ? (
+                  <p className="text-sm text-muted-foreground py-10 text-center">
+                    No service requests in this window yet — this chart fills in as guardians
+                    submit requests.
+                  </p>
+                ) : (
+                  <>
+                    <div className="mb-5 flex flex-wrap items-end gap-x-10 gap-y-3">
+                      <div>
+                        <div className="text-xs text-muted-foreground">Services requested</div>
+                        <div className="text-3xl font-bold tabular-nums">
+                          {serviceMixTrend.totalDemand}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-xs text-muted-foreground">Most requested</div>
+                        <div className="text-lg font-semibold">
+                          {serviceMixTrend.topCategory.label}{" "}
+                          <span className="text-sm font-normal text-muted-foreground">
+                            ({serviceMixTrend.topCategory.total})
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-center">
+                      <div className="min-w-0 flex-1">
+                        <ResponsiveContainer width="100%" height={260}>
+                          <BarChart data={serviceMixTrend.chartData} margin={CHART_MARGIN}>
+                            <CartesianGrid
+                              strokeDasharray="3 3"
+                              vertical={false}
+                              stroke="hsl(var(--border))"
+                              strokeOpacity={0.6}
+                            />
+                            <XAxis
+                              dataKey="month"
+                              stroke="hsl(var(--muted-foreground))"
+                              fontSize={11}
+                              tickLine={false}
+                              axisLine={{ stroke: "hsl(var(--border))" }}
+                              dy={4}
+                            />
+                            <YAxis
+                              stroke="hsl(var(--muted-foreground))"
+                              fontSize={11}
+                              width={32}
+                              tickLine={false}
+                              axisLine={false}
+                              allowDecimals={false}
+                            />
+                            <Tooltip
+                              cursor={{ fill: "hsl(var(--primary))", fillOpacity: 0.06 }}
+                              content={(props) => <BandAwareTooltip {...props} labelPrefix="Month" />}
+                            />
+                            {SERVICE_CATEGORIES.map((c, i) => (
+                              <Bar
+                                key={c.id}
+                                dataKey={c.id}
+                                name={c.label}
+                                stackId="svc"
+                                fill={c.color}
+                                radius={
+                                  i === SERVICE_CATEGORIES.length - 1
+                                    ? [6, 6, 0, 0]
+                                    : [0, 0, 0, 0]
+                                }
+                                maxBarSize={56}
+                              />
+                            ))}
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </div>
+                      <ChartLegend
+                        orientation="vertical"
+                        title="Care type"
+                        className="lg:w-44 lg:shrink-0"
+                        items={SERVICE_CATEGORIES.map((c) => ({
+                          label: c.label,
+                          color: c.color,
+                          variant: "bar" as const,
+                        }))}
+                      />
+                    </div>
+                  </>
+                )}
               </CardContent>
             </Card>
           </TabsContent>
@@ -2500,12 +2706,12 @@ const Dashboard = () => {
                   <div className="rounded-xl border p-4 bg-muted/40">
                     <div className="text-xs text-muted-foreground mb-1">Forecast (next period)</div>
                     <div className="text-2xl font-bold">
-                      {volunteerAnalytics.topThreeForecastInsufficient
+                      {volunteerAnalytics.allForecastInsufficient
                         ? "—"
-                        : volunteerAnalytics.topThreeForecastSum}
+                        : volunteerAnalytics.allNextForecast}
                     </div>
                     <p className="text-xs text-muted-foreground mt-1">
-                      est. services from top 3
+                      est. services · all caretakers
                     </p>
                   </div>
                 </div>
@@ -2562,35 +2768,37 @@ const Dashboard = () => {
                       {volunteerAnalytics.chartTitle}
                     </h4>
                     <p className="text-xs text-muted-foreground mb-4">
-                      Solid = actual · dashed = forecast · shaded band = prediction range
+                      Completed services across all approved caretakers · dashed = forecast ·
+                      shaded band = prediction range
                     </p>
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-center">
+                      <div className="min-w-0 flex-1">
                     <ResponsiveContainer width="100%" height={220}>
-                      <ComposedChart
-                        data={volunteerAnalytics.trendChartData}
-                        margin={{ top: 40, right: 10, left: 60, bottom: 25 }}
-                      >
-                        <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                      <ComposedChart data={volunteerAnalytics.trendChartData} margin={CHART_MARGIN}>
+                        <CartesianGrid
+                          strokeDasharray="3 3"
+                          vertical={false}
+                          stroke="hsl(var(--border))"
+                          strokeOpacity={0.6}
+                        />
                         <XAxis
                           dataKey="label"
                           stroke="hsl(var(--muted-foreground))"
                           fontSize={11}
-                          label={{
-                            value: volunteerAnalytics.chartXLabel,
-                            position: "insideBottom",
-                            offset: -5,
-                          }}
+                          tickLine={false}
+                          axisLine={{ stroke: "hsl(var(--border))" }}
+                          dy={4}
                         />
                         <YAxis
                           stroke="hsl(var(--muted-foreground))"
                           fontSize={11}
-                          label={{
-                            value: "Services completed",
-                            angle: -90,
-                            position: "insideLeft",
-                            dy: 80,
-                          }}
+                          width={32}
+                          tickLine={false}
+                          axisLine={false}
+                          allowDecimals={false}
                         />
                         <Tooltip
+                          cursor={{ stroke: "hsl(var(--primary))", strokeOpacity: 0.25, strokeWidth: 1.5 }}
                           content={(props) => (
                             <BandAwareTooltip
                               {...props}
@@ -2598,67 +2806,76 @@ const Dashboard = () => {
                             />
                           )}
                         />
-                        {/* Prediction bands per volunteer */}
-                        {volunteerAnalytics.topVolunteers.slice(0, 3).map((v, i) => (
-                          <>
-                            <Area
-                              key={`${v.id}-bl`}
-                              type="monotone"
-                              name={FORECAST_BAND_AREA_NAME}
-                              dataKey={`v_${v.id}_bandLow`}
-                              stroke="none"
-                              fill="transparent"
-                              stackId={`band_${v.id}`}
-                              dot={false}
-                              activeDot={false}
-                              legendType="none"
-                              connectNulls={false}
-                            />
-                            <Area
-                              key={`${v.id}-bd`}
-                              type="monotone"
-                              name={FORECAST_BAND_AREA_NAME}
-                              dataKey={`v_${v.id}_bandDiff`}
-                              stroke="none"
-                              fill={volunteerColors[i]}
-                              fillOpacity={0.15}
-                              stackId={`band_${v.id}`}
-                              dot={false}
-                              activeDot={false}
-                              legendType="none"
-                              connectNulls={false}
-                            />
-                          </>
-                        ))}
-                        {/* Actual lines */}
-                        {volunteerAnalytics.topVolunteers.slice(0, 3).map((v, i) => (
-                          <Line
-                            key={v.id}
-                            type="monotone"
-                            dataKey={`v_${v.id}`}
-                            stroke={volunteerColors[i]}
-                            strokeWidth={2}
-                            dot={{ r: 3 }}
-                            name={v.name}
-                            connectNulls={false}
-                          />
-                        ))}
-                        {/* Forecast lines */}
-                        {volunteerAnalytics.topVolunteers.slice(0, 3).map((v, i) => (
-                          <Line
-                            key={`${v.id}-fc`}
-                            type="monotone"
-                            dataKey={`v_${v.id}_fc`}
-                            stroke={volunteerColors[i]}
-                            strokeWidth={2}
-                            strokeDasharray="6 4"
-                            dot={{ r: 2 }}
-                            name={`${v.name} (forecast)`}
-                            connectNulls
-                          />
-                        ))}
+                        {/* Prediction band — All caretakers */}
+                        <Area
+                          type="monotone"
+                          name={FORECAST_BAND_AREA_NAME}
+                          dataKey="allBandLow"
+                          stroke="none"
+                          fill="transparent"
+                          stackId="band_all"
+                          dot={false}
+                          activeDot={false}
+                          legendType="none"
+                          connectNulls={false}
+                        />
+                        <Area
+                          type="monotone"
+                          name={FORECAST_BAND_AREA_NAME}
+                          dataKey="allBandDiff"
+                          stroke="none"
+                          fill="hsl(var(--primary))"
+                          fillOpacity={0.15}
+                          stackId="band_all"
+                          dot={false}
+                          activeDot={false}
+                          legendType="none"
+                          connectNulls={false}
+                        />
+                        {/* All caretakers — actual */}
+                        <Line
+                          type="monotone"
+                          dataKey="allActual"
+                          stroke="hsl(var(--primary))"
+                          strokeWidth={3}
+                          dot={{ r: 3, strokeWidth: 0, fill: "hsl(var(--primary))" }}
+                          activeDot={{ r: 6, strokeWidth: 2, stroke: "hsl(var(--background))" }}
+                          name="All caretakers"
+                          connectNulls={false}
+                        />
+                        {/* All caretakers — forecast */}
+                        <Line
+                          type="monotone"
+                          dataKey="allFc"
+                          stroke="hsl(var(--primary))"
+                          strokeWidth={3}
+                          strokeDasharray="6 4"
+                          dot={{ r: 2.5, fill: "hsl(var(--primary))" }}
+                          activeDot={{ r: 6, strokeWidth: 2, stroke: "hsl(var(--background))" }}
+                          name="All caretakers (forecast)"
+                          connectNulls
+                        />
                       </ComposedChart>
                     </ResponsiveContainer>
+                      </div>
+                      <ChartLegend
+                        orientation="vertical"
+                        title="Legend"
+                        className="lg:w-44 lg:shrink-0"
+                        items={[
+                          {
+                            label: "All caretakers",
+                            color: "hsl(var(--primary))",
+                            variant: "solid" as const,
+                          },
+                          {
+                            label: "Forecast",
+                            color: "hsl(var(--primary))",
+                            variant: "dashed" as const,
+                          },
+                        ]}
+                      />
+                    </div>
                   </div>
                 )}
 
@@ -2700,26 +2917,27 @@ const Dashboard = () => {
                     </p>
                   ) : (
                     <ResponsiveContainer width="100%" height={160}>
-                      <LineChart
-                        data={ratingQualityTrend.chartData}
-                        margin={{ top: 10, right: 10, left: 50, bottom: 20 }}
-                      >
-                        <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                      <LineChart data={ratingQualityTrend.chartData} margin={CHART_MARGIN}>
+                        <CartesianGrid
+                          strokeDasharray="3 3"
+                          vertical={false}
+                          stroke="hsl(var(--border))"
+                          strokeOpacity={0.6}
+                        />
                         <XAxis
                           dataKey="month"
                           stroke="hsl(var(--muted-foreground))"
                           fontSize={11}
+                          tickLine={false}
+                          axisLine={{ stroke: "hsl(var(--border))" }}
                         />
                         <YAxis
                           domain={[3, 5]}
                           stroke="hsl(var(--muted-foreground))"
                           fontSize={11}
-                          label={{
-                            value: "Avg rating",
-                            angle: -90,
-                            position: "insideLeft",
-                            dy: 40,
-                          }}
+                          width={28}
+                          tickLine={false}
+                          axisLine={false}
                         />
                         <Tooltip
                           contentStyle={CHART_TOOLTIP_STYLE}
@@ -2735,8 +2953,9 @@ const Dashboard = () => {
                                 ? "hsl(var(--destructive))"
                                 : "hsl(var(--primary))"
                           }
-                          strokeWidth={2}
-                          dot={{ r: 3 }}
+                          strokeWidth={2.5}
+                          dot={{ r: 3, strokeWidth: 0 }}
+                          activeDot={{ r: 5, strokeWidth: 2, stroke: "hsl(var(--background))" }}
                           connectNulls
                         />
                       </LineChart>
@@ -2853,29 +3072,59 @@ const Dashboard = () => {
                         : " · dashed = forecast · shaded = prediction range"}
                       .
                     </p>
+                    <div className="mb-4 flex flex-wrap items-end gap-x-8 gap-y-3">
+                      <div>
+                        <div className="text-xs text-muted-foreground">Cancellation rate</div>
+                        <div
+                          className={cn(
+                            "text-3xl font-bold tabular-nums",
+                            cancellationAnalytics.rate > 15
+                              ? "text-destructive"
+                              : "text-foreground"
+                          )}
+                        >
+                          {cancellationAnalytics.rate}%
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          {cancellationAnalytics.total} of {cancellationAnalytics.totalInPeriod}{" "}
+                          requests · last {cancellationAnalytics.periodLabel}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-center">
+                      <div className="min-w-0 flex-1">
                     <ResponsiveContainer width="100%" height={200}>
-                      <ComposedChart
-                        data={cancellationAnalytics.chartData}
-                        margin={{ top: 16, right: 10, left: 60, bottom: 25 }}
-                      >
-                        <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                      <ComposedChart data={cancellationAnalytics.chartData} margin={CHART_MARGIN}>
+                        <defs>
+                          <linearGradient id="barCancel" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor="hsl(var(--destructive))" stopOpacity={0.9} />
+                            <stop offset="100%" stopColor="hsl(var(--destructive))" stopOpacity={0.5} />
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid
+                          strokeDasharray="3 3"
+                          vertical={false}
+                          stroke="hsl(var(--border))"
+                          strokeOpacity={0.6}
+                        />
                         <XAxis
                           dataKey="month"
                           stroke="hsl(var(--muted-foreground))"
                           fontSize={11}
-                          label={{ value: "Month", position: "insideBottom", offset: -5 }}
+                          tickLine={false}
+                          axisLine={{ stroke: "hsl(var(--border))" }}
+                          dy={4}
                         />
                         <YAxis
                           stroke="hsl(var(--muted-foreground))"
                           fontSize={11}
-                          label={{
-                            value: "Cancellations",
-                            angle: -90,
-                            position: "insideLeft",
-                            dy: 50,
-                          }}
+                          width={32}
+                          tickLine={false}
+                          axisLine={false}
+                          allowDecimals={false}
                         />
                         <Tooltip
+                          cursor={{ fill: "hsl(var(--destructive))", fillOpacity: 0.06 }}
                           content={(props) => (
                             <BandAwareTooltip {...props} labelPrefix="Month" />
                           )}
@@ -2909,38 +3158,47 @@ const Dashboard = () => {
                         <Bar
                           dataKey="cancelled"
                           name="Actual"
-                          fill="hsl(var(--destructive))"
-                          radius={[4, 4, 0, 0]}
+                          fill="url(#barCancel)"
+                          radius={[6, 6, 0, 0]}
+                          maxBarSize={56}
                         />
                         <Line
                           type="monotone"
                           dataKey="cancelledFc"
                           name="Forecast"
                           stroke="hsl(var(--destructive))"
-                          strokeWidth={2}
+                          strokeWidth={2.5}
                           strokeDasharray="6 4"
                           dot={{ r: 3, fill: "hsl(var(--destructive))" }}
+                          activeDot={{ r: 5, strokeWidth: 2, stroke: "hsl(var(--background))" }}
                           connectNulls={false}
                         />
                       </ComposedChart>
                     </ResponsiveContainer>
+                      </div>
+                      <ChartLegend
+                        orientation="vertical"
+                        title="Legend"
+                        className="lg:w-44 lg:shrink-0"
+                        items={[
+                          {
+                            label: "Actual",
+                            color: "hsl(var(--destructive))",
+                            variant: "bar",
+                          },
+                          !cancellationAnalytics.cancellationForecastInsufficient && {
+                            label: "Forecast",
+                            color: "hsl(var(--destructive))",
+                            variant: "dashed",
+                          },
+                        ]}
+                      />
+                    </div>
                     {cancellationAnalytics.cancellationForecastInsufficient && (
                       <p className="text-xs text-muted-foreground mt-2">
                         Insufficient data to extend forecast (need at least 2 months with
                         cancellations in this window).
                       </p>
-                    )}
-                    {!cancellationAnalytics.cancellationForecastInsufficient && (
-                      <div className="flex justify-end gap-4 mt-2 text-xs text-muted-foreground">
-                        <span className="flex items-center gap-1.5">
-                          <span className="inline-block w-3 h-3 rounded-sm bg-[hsl(var(--destructive))]" />
-                          Actual
-                        </span>
-                        <span className="flex items-center gap-1.5">
-                          <span className="inline-block w-4 border-b-2 border-[hsl(var(--destructive))] border-dashed" />
-                          Forecast
-                        </span>
-                      </div>
                     )}
                   </div>
                 </div>
