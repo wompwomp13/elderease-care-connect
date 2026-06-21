@@ -1,104 +1,117 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Public collections: none
 
-    // Users collection holds per-user profile and role
+    // User profiles
     match /users/{userId} {
       allow read: if isSignedIn();
       allow create: if isSignedIn() && request.auth.uid == userId && isAllowedSignupRole();
-      allow update: if isSignedIn() && request.auth.uid == userId;
-      allow delete: if false; // do not allow delete from client for safety
+      allow update: if isAdmin() || (isSignedIn() && request.auth.uid == userId);
+      allow delete: if false;
 
       function isAllowedSignupRole() {
         return request.resource.data.role in ['elderly', 'companion'];
       }
     }
 
-    // Public volunteer applications (from landing page, no auth required to submit)
+    // Public volunteer applications (landing page)
     match /pendingVolunteers/{docId} {
-      // Allow unauthenticated creates from the public form
       allow create: if true
-        && 'fullName' in request.resource.data
-        && 'email' in request.resource.data
-        && 'services' in request.resource.data
+        && ('fullName' in request.resource.data)
+        && ('email' in request.resource.data)
+        && ('services' in request.resource.data)
         && request.resource.data.status == 'pending';
 
-      // Allow reads of approved applications (so pre-signup check can happen)
-      allow read: if isApprovedVolunteer();
-      allow update: if isSignedIn() 
-        && onlyUpdatingStatusFields();
-      allow delete: if false; // prevent accidental deletions
+      allow read: if isApprovedVolunteer() || isSignedIn();
 
-      function onlyUpdatingStatusFields() {
-        // Only allow updating status and decidedAt fields
-        return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'decidedAt']);
-      }
+      allow update: if isAdmin()
+        || (isSignedIn() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','decidedAt']))
+        || (isSignedIn() && resource.data.email == request.auth.token.email && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['profilePhotoUrl','profilePhotoStoragePath']));
+
+      allow delete: if isAdmin();
 
       function isApprovedVolunteer() {
         return resource.data.status == 'approved';
       }
     }
 
-    // Approved volunteers (managed by admin/server)
     match /volunteers/{docId} {
       allow read: if isSignedIn();
-      allow create, update, delete: if false; // server-only
+      allow create, update, delete: if false;
     }
 
-    // Service requests
     match /serviceRequests/{id} {
       allow read: if isSignedIn();
       allow create: if isSignedIn();
       allow update: if isSignedIn();
-      allow delete: if false;
+      allow delete: if isAdmin();
     }
 
-    // Assignments - volunteers accept/decline, mark complete, rate; elders confirm
-    match /assignments/{assignmentId} {
-      allow read: if isSignedIn();
-      allow create: if isSignedIn();
-      allow update: if isSignedIn() && (
-        isAdmin()
-        || isVolunteerUpdatingOwnAssignment(assignmentId)
-        || isElderConfirmingOwnAssignment(assignmentId)
+    // Assignments (admin or preferred volunteer creates)
+    match /assignments/{id} {
+      allow create: if isSignedIn() && (
+        (isAdmin()
+          && ('requestId' in request.resource.data)
+          && ('volunteerEmail' in request.resource.data))
+        ||
+        (request.resource.data.acceptedByVolunteer == true
+          && (request.resource.data.volunteerEmail == request.auth.token.email
+            || (request.resource.data.volunteerUid != null && request.resource.data.volunteerUid == request.auth.uid))
+          && ('requestId' in request.resource.data)
+          && ('volunteerEmail' in request.resource.data)
+          && ('status' in request.resource.data)
+          && request.resource.data.status == 'assigned')
       );
-      allow delete: if false;
 
-      function isAdmin() {
-        return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
-      }
-      function isVolunteerUpdatingOwnAssignment(assignmentId) {
-        let a = get(/databases/$(database)/documents/assignments/$(assignmentId)).data;
-        return a.volunteerEmail != null
-          && a.volunteerEmail == request.auth.token.email
-          && request.resource.data.diff(resource.data).affectedKeys()
-            .hasOnly(['status','rated','awaitingGuardianConfirm','updatedAt','declinedAt','declineReason','acceptedByVolunteer','acceptedByVolunteerAt','rated']);
-      }
-      function isElderConfirmingOwnAssignment(assignmentId) {
-        let a = get(/databases/$(database)/documents/assignments/$(assignmentId)).data;
-        return a.elderUserId != null
-          && a.elderUserId == request.auth.uid
-          && request.resource.data.diff(resource.data).affectedKeys()
-            .hasOnly(['guardianConfirmed','updatedAt']);
-      }
+      allow read: if isSignedIn();
+
+      allow update: if isSignedIn() && (
+        (
+          (resource.data.volunteerEmail == request.auth.token.email
+            || (('volunteerUid' in resource.data) && resource.data.volunteerUid == request.auth.uid))
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','rated','awaitingGuardianConfirm','updatedAt','declinedAt','declineReason','acceptedByVolunteer','acceptedByVolunteerAt'])
+        )
+        ||
+        (
+          (('elderUserId' in resource.data) && resource.data.elderUserId == request.auth.uid)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['guardianConfirmed','updatedAt'])
+        )
+        ||
+        isAdmin()
+      );
+
+      allow delete: if isAdmin();
     }
 
-    // Notifications - created by app, read by recipient
+    // Notifications (volunteer decline alerts for guardian and admin)
     match /notifications/{id} {
+      allow create: if isSignedIn()
+        && ('recipientUid' in request.resource.data)
+        && ('type' in request.resource.data)
+        && ('title' in request.resource.data)
+        && ('body' in request.resource.data)
+        && ('createdAt' in request.resource.data);
       allow read: if isSignedIn();
-      allow create: if isSignedIn();
-      allow update, delete: if false;
+      allow update: if isSignedIn() && (
+        resource.data.recipientUid == request.auth.uid
+        || (resource.data.recipientUid == 'ADMIN' && isAdmin())
+        || isAdmin()
+      );
+      allow delete: if isSignedIn();
     }
 
-    // Ratings
     match /ratings/{id} {
+      allow create: if isSignedIn()
+        && ('assignmentId' in request.resource.data)
+        && ('volunteerEmail' in request.resource.data)
+        && ('rating' in request.resource.data)
+        && request.resource.data.rating >= 1
+        && request.resource.data.rating <= 5;
       allow read: if isSignedIn();
-      allow create: if isSignedIn();
-      allow update, delete: if false;
+      allow update, delete: if isAdmin();
     }
 
-    // Volunteer time off (full-day unavailability) — companions manage own docs; all signed-in may read for scheduling
+    // Volunteer time off (full-day unavailability) — companions CRUD own docs; signed-in users read for scheduling
     match /volunteerLeave/{leaveId} {
       allow read: if isSignedIn();
       allow create: if isSignedIn() && volunteerLeaveCreateValid();
@@ -151,10 +164,19 @@ service cloud.firestore {
       }
     }
 
+    match /formMetrics/{id} {
+      allow create: if true
+        && ('type' in request.resource.data)
+        && ('durationMs' in request.resource.data);
+      allow read: if isSignedIn();
+      allow update, delete: if false;
+    }
+
     function isSignedIn() {
       return request.auth != null;
     }
+    function isAdmin() {
+      return isSignedIn() && request.auth.token.email == 'admin@gmail.com';
+    }
   }
 }
-
-
