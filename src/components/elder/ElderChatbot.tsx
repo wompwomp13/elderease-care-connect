@@ -61,10 +61,14 @@ const faqShortcuts: { label: string; query: string }[] = [
   { label: "Payments", query: "How do payments or receipts work on ElderEase?" },
 ];
 
+// Default to same-origin ("") so a single-service deploy just works: the
+// server that hosts this app also serves /api/chat. In local dev the Vite
+// proxy (see vite.config.ts) forwards /api to the chatbot server on :4000.
+// Set VITE_CHATBOT_API_URL only if the API is hosted on a different origin.
 const apiBase =
   (import.meta as any).env?.VITE_CHATBOT_API_URL ||
   (import.meta as any).env?.CHATBOT_API_URL ||
-  "http://localhost:4000";
+  "";
 
 const ElderChatbot = () => {
   const [isOpen, setIsOpen] = useState(false);
@@ -97,6 +101,9 @@ const ElderChatbot = () => {
   };
 
   const sendToChatbot = async (userText: string, history: ChatMessage[]) => {
+    // Abort a stalled request so the user isn't left waiting indefinitely.
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 30000);
     try {
       const res = await fetch(`${apiBase}/api/chat`, {
         method: "POST",
@@ -104,6 +111,7 @@ const ElderChatbot = () => {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ message: userText, history }),
+        signal: controller.signal,
       });
 
       if (!res.ok) {
@@ -138,6 +146,7 @@ const ElderChatbot = () => {
         },
       ]);
     } finally {
+      window.clearTimeout(timeoutId);
       setIsTyping(false);
       setIsSending(false);
     }

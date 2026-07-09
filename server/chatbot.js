@@ -2,6 +2,11 @@ import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import OpenAI from "openai";
+import path from "path";
+import fs from "fs";
+import { fileURLToPath } from "url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const app = express();
 const port = process.env.PORT || 4000;
@@ -12,8 +17,13 @@ if (!process.env.OPENAI_API_KEY) {
   );
 }
 
+// maxRetries lets the SDK transparently retry transient failures
+// (429 rate limits, 5xx, network/timeout errors) with exponential backoff,
+// which is the main cause of the intermittent "trouble connecting" replies.
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
+  maxRetries: 2,
+  timeout: 12000,
 });
 
 app.use(cors({ origin: true }));
@@ -131,30 +141,41 @@ function scoreEntry(message) {
 // that are truly unrelated to ElderEase back to the website topics.
 const OUT_OF_SCOPE_PATTERNS = [];
 
+// Builds a reply straight from the knowledge base. Used when OpenAI is
+// unavailable (missing key, timeout, rate limit, outage) so the assistant
+// still returns a valid, on-topic answer instead of a connection error.
+function buildFallbackReply(scored, redirectReply) {
+  const best = scored[0];
+  if (!best || best.score <= 0) {
+    return redirectReply;
+  }
+  return best.entry.content;
+}
+
 app.post("/api/chat", async (req, res) => {
+  const message = (req.body?.message || "").toString().trim();
+  const history = Array.isArray(req.body?.history) ? req.body.history : [];
+  if (!message) {
+    return res.status(400).json({ error: "Message is required." });
+  }
+
+  const redirectReply =
+    "I'm here to answer questions about ElderEase, our services, volunteers, and how to use this website. Could you ask something about our services or how to get support?";
+
+  // Rank knowledge base entries against the question
+  const scored = knowledgeBase
+    .map((entry) => ({ entry, score: scoreEntry(message)(entry) }))
+    .sort((a, b) => b.score - a.score);
+
+  // Include more entries regardless of exact score so that OpenAI
+  // almost always has some context to work with.
+  const top = scored.slice(0, Math.min(scored.length, 8));
+
   try {
-    const message = (req.body?.message || "").toString().trim();
-    const history = Array.isArray(req.body?.history) ? req.body.history : [];
-    if (!message) {
-      return res.status(400).json({ error: "Message is required." });
-    }
-
-    const redirectReply =
-      "I'm here to answer questions about ElderEase, our services, volunteers, and how to use this website. Could you ask something about our services or how to get support?";
-
-    // Rank knowledge base entries against the question
-    const scored = knowledgeBase
-      .map((entry) => ({ entry, score: scoreEntry(message)(entry) }))
-      .sort((a, b) => b.score - a.score);
-
-    // Include more entries regardless of exact score so that OpenAI
-    // almost always has some context to work with.
-    const top = scored.slice(0, Math.min(scored.length, 8));
-
     if (!process.env.OPENAI_API_KEY) {
-      return res
-        .status(500)
-        .json({ error: "Chatbot is not configured yet. Please try again later." });
+      // No API key: still answer directly from the knowledge base so the
+      // assistant remains useful instead of showing a connection error.
+      return res.json({ reply: buildFallbackReply(scored, redirectReply) });
     }
 
     const contextText = top
@@ -239,15 +260,33 @@ app.post("/api/chat", async (req, res) => {
     res.json({ reply });
   } catch (err) {
     console.error("[ElderEase chatbot] Error:", err);
-    res.status(500).json({
-      error: "Sorry, I'm having trouble answering right now. Please try again in a little while.",
-    });
+    // OpenAI failed even after automatic retries (outage, rate limit,
+    // timeout). Fall back to a direct knowledge-base answer so the user
+    // still gets a valid, on-topic reply instead of a connection error.
+    res.json({ reply: buildFallbackReply(scored, redirectReply) });
   }
 });
 
 app.get("/health", (_req, res) => {
   res.json({ status: "ok" });
 });
+
+// Serve the built frontend from this same server (single-service deploy).
+// In local dev the Vite dev server hosts the app instead, so this block is
+// skipped when there is no production build yet.
+const distPath = path.resolve(__dirname, "..", "dist");
+if (fs.existsSync(path.join(distPath, "index.html"))) {
+  app.use(express.static(distPath));
+  // SPA fallback: send index.html for any non-API route so React Router works.
+  app.get("*", (_req, res) => {
+    res.sendFile(path.join(distPath, "index.html"));
+  });
+  console.log("[ElderEase chatbot] Serving frontend from", distPath);
+} else {
+  console.log(
+    "[ElderEase chatbot] No production build found (run `npm run build`). Serving API only."
+  );
+}
 
 app.listen(port, () => {
   console.log(`[ElderEase chatbot] Server listening on http://localhost:${port}`);
