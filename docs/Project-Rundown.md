@@ -2,29 +2,35 @@
 
 This guide summarizes the most critical flows in ElderEase, how they work end-to-end, and the essential code you may want to review. Each section includes a short explanation and a compact code snippet to orient you in the codebase.
 
+For project-level context — user types, the full Firestore data model, hosting and deployment on Render, local setup, and known tech debt — see [`../HANDOFF.md`](../HANDOFF.md).
+
 ### 1) Account creation & dynamic role routing
 After sign-up or login, we create/read a profile in Firestore under `users/{uid}` and also keep a compact copy in localStorage. We subscribe to the Firestore user doc so any admin edits (e.g., updated display name or status=terminated) propagate instantly. Routing sends users to the correct role home using the stored role.
 
-Key files: `src/lib/auth.ts`, `src/App.tsx`
+Terminated volunteers are **not** logged out. The profile carries `terminated` and `terminationReason`, and `CompanionGate` renders a restricted "account terminated" screen showing the reason. Termination is detected from `users.status === 'terminated'`, with a fallback lookup in `pendingVolunteers` by email for companions terminated before the `users` doc was synced.
+
+Key files: `src/lib/auth.ts`, `src/App.tsx`, `src/components/companion/CompanionGate.tsx`
 
 ```ts
-// Live user profile sync; auto-logout if terminated
+// Live user profile sync; terminated users keep a session but get a restricted view
 // src/lib/auth.ts
 userDocUnsub = onSnapshot(doc(db, "users", u.uid), async (snap) => {
   if (!snap.exists()) { setLocalProfile(null); cb(null); return; }
   const data = snap.data() as any;
-  if ((data?.status || "").toLowerCase() === "terminated") {
-    await signOut(auth);
-    setLocalProfile(null);
-    cb(null);
-    return;
+  let terminated = (data?.status || "").toLowerCase() === "terminated";
+  let terminationReason: string | null = terminated ? (data?.terminationReason ?? null) : null;
+  // Fallback: companion terminated via pendingVolunteers only
+  if (data?.role === "companion" && !terminated) {
+    const email = (u.email ?? data?.email ?? "").toString().trim().toLowerCase();
+    // ...query pendingVolunteers where email == email && status == 'terminated'
   }
   const profile: AuthProfile = {
     uid: u.uid,
-    email: u.email ?? data.email ?? null,
-    displayName: u.displayName ?? data.displayName ?? null,
-    role: data.role,
-    phone: data.phone ?? null,
+    email: u.email ?? data?.email ?? null,
+    displayName: u.displayName ?? data?.displayName ?? null,
+    role: data?.role,
+    phone: data?.phone ?? null,
+    ...(terminated && { terminated: true, terminationReason }),
   };
   setLocalProfile(profile);
   cb(profile);
@@ -39,10 +45,15 @@ if (!user) return <Navigate to="/login" replace />;
 return <Navigate to={`/${user.role === 'elderly' ? 'elder' : user.role}`} replace />;
 ```
 
-### 2) Service requests (Elder → Admin → Assignment)
-Guardians submit requests with services/date/time and an optional preferred volunteer. Admins review, compute dynamic pricing, check conflicts, then create an `assignments` document and mark the request as assigned. The assignment becomes the single source of truth for schedules, notifications, and receipts.
+### 2) Service requests (Elder → Admin or Volunteer → Assignment)
+Guardians submit requests with services/date/time and an optional preferred volunteer. There are then **two paths to an assignment**:
 
-Key files: `src/pages/elder/RequestService.tsx`, `src/pages/admin/ServiceRequests.tsx`
+- **Admin assigns** (`src/pages/admin/ServiceRequests.tsx`): admin reviews, computes dynamic pricing (performance tier + demand tier), checks conflicts, creates the `assignments` doc and marks the request assigned. `acceptedByVolunteer` is left unset until the volunteer accepts in Find Requests, and the volunteer may still decline — which flips the assignment to `declined` and reverts the request to `pending`.
+- **Preferred volunteer self-accepts** (`src/pages/companion/FindRequests.tsx`): the volunteer accepts directly in a transaction, creating the assignment with `acceptedByVolunteer: true`. This path uses the performance tier only; the demand modifier is fixed at 0%.
+
+Either way, the assignment becomes the single source of truth for schedules, notifications, and receipts.
+
+Key files: `src/pages/elder/RequestService.tsx`, `src/pages/admin/ServiceRequests.tsx`, `src/pages/companion/FindRequests.tsx`
 
 ```ts
 // Request payload, normalized for reliable reads downstream
@@ -248,7 +259,9 @@ await addDoc(collection(db, 'ratings'), {
 ```
 
 ### 10) Security rules (minimum needed for the flows above)
-Signed‑in users can read `serviceRequests`. Assignments reads are permitted for signed‑in users to support availability checks and dashboards; field‑level updates remain restricted by actor.
+Signed‑in users can read `serviceRequests`. Assignments reads are permitted for signed‑in users to support availability checks and dashboards; field‑level updates remain restricted by actor. Deletes are admin‑only, because the admin Service Requests page cascades a delete across `ratings`, `notifications`, `assignments`, and finally the request itself.
+
+Admin is identified by email: `request.auth.token.email == 'admin@gmail.com'`.
 
 Key file: `firebase.rules`
 
@@ -257,9 +270,11 @@ match /serviceRequests/{id} {
   allow read: if isSignedIn();
   allow create: if isSignedIn();
   allow update: if isSignedIn();
-  allow delete: if false;
+  allow delete: if isAdmin();
 }
 ```
+
+Note that these rules are intentionally permissive for a demo: any signed‑in user can read all requests, assignments, ratings and notifications, and can update any `serviceRequests` doc. Tighten before any real deployment.
 
 ---
 

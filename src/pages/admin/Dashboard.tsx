@@ -55,6 +55,13 @@ type TooltipPayloadEntry = {
 const FORECAST_BAND_AREA_NAME = "__forecastRangeBand";
 
 /**
+ * Forecasts use linear regression on the selected window. A simple-average mode
+ * used to be selectable, but it only ever repeated a typical month and could not
+ * be defended as a projection, so trend is now the single method.
+ */
+const FORECAST_METHOD: ForecastMethod = "trend";
+
+/**
  * Helper Recharts series (shaded forecast bands, gradient fills under lines) carry
  * a name starting with "__" so they render visually but never show up in tooltips.
  */
@@ -145,7 +152,6 @@ const Dashboard = () => {
   // --- Forecast controls (global) ---
   const [forecastWindow, setForecastWindow] = useState<ForecastWindow>(6);
   const [forecastHorizon, setForecastHorizon] = useState<ForecastHorizon>(2);
-  const [forecastMethod, setForecastMethod] = useState<ForecastMethod>("trend");
   const [adminReportRangeOpen, setAdminReportRangeOpen] = useState(false);
   const [forecastSidebarOpen, setForecastSidebarOpen] = useState(false);
 
@@ -443,7 +449,9 @@ const Dashboard = () => {
   const monthlyTrend = useMemo(() => {
     const cur = new Date(now);
     const months: { month: string; services: number; key: string }[] = [];
-    for (let i = forecastWindow - 1; i >= 0; i--) {
+    // One extra leading month: training lead-in for the current-month back-test,
+    // sliced off before the chart renders.
+    for (let i = forecastWindow; i >= 0; i--) {
       const d = new Date(cur.getFullYear(), cur.getMonth() - i, 1);
       const key = `${d.getFullYear()}-${d.getMonth()}`;
       months.push({ month: d.toLocaleString(undefined, { month: "short" }), services: 0, key });
@@ -458,14 +466,26 @@ const Dashboard = () => {
       if (idx >= 0) months[idx].services += 1;
     });
     const values = months.map((m) => m.services);
-    const built = buildForecastSeries(values, forecastWindow, forecastHorizon, forecastMethod);
-    const historical = months.map(({ month, services }) => ({
-      month,
-      services,
-      forecast: null as number | null,
-      fcBandLow: null as number | null,
-      fcBandDiff: null as number | null,
-    }));
+    const built = buildForecastSeries(values, forecastWindow, forecastHorizon);
+    // months[0] is lead-in for the back-test only — drop it before charting.
+    const shown = months.slice(1);
+    // The current (last) month carries both its actual and a back-tested forecast,
+    // so the forecast line starts on top of the actual instead of leaving a gap.
+    const historical = shown.map(({ month, services }, i) => {
+      const isCurrent = i === shown.length - 1;
+      const low = isCurrent ? built.currentLow : null;
+      const high = isCurrent ? built.currentHigh : null;
+      return {
+        month,
+        services,
+        forecast:
+          isCurrent && built.currentPrediction != null
+            ? Math.round(built.currentPrediction)
+            : (null as number | null),
+        fcBandLow: low,
+        fcBandDiff: low != null && high != null ? Math.max(0, high - low) : null,
+      };
+    });
     if (built.insufficient || !built.forecast) return historical;
     const cur2 = new Date(now);
     const nextMonths = built.forecast.map((val, i) => {
@@ -481,14 +501,15 @@ const Dashboard = () => {
       };
     });
     return [...historical, ...nextMonths];
-  }, [assignments, forecastWindow, forecastHorizon, forecastMethod]);
+  }, [assignments, forecastWindow, forecastHorizon]);
 
   // ─── Monthly requests trend (non-cancelled, for Request Analytics toggle) ───
 
   const monthlyRequestsTrend = useMemo(() => {
     const cur = new Date(now);
     const months: { month: string; services: number; key: string }[] = [];
-    for (let i = forecastWindow - 1; i >= 0; i--) {
+    // One extra leading month of back-test lead-in (sliced off before charting).
+    for (let i = forecastWindow; i >= 0; i--) {
       const d = new Date(cur.getFullYear(), cur.getMonth() - i, 1);
       const key = `${d.getFullYear()}-${d.getMonth()}`;
       months.push({ month: d.toLocaleString(undefined, { month: "short" }), services: 0, key });
@@ -504,14 +525,25 @@ const Dashboard = () => {
       if (idx >= 0) months[idx].services += 1;
     });
     const values = months.map((m) => m.services);
-    const built = buildForecastSeries(values, forecastWindow, forecastHorizon, forecastMethod);
-    const historical = months.map(({ month, services }) => ({
-      month,
-      services,
-      forecast: null as number | null,
-      fcBandLow: null as number | null,
-      fcBandDiff: null as number | null,
-    }));
+    const built = buildForecastSeries(values, forecastWindow, forecastHorizon);
+    // months[0] is lead-in for the back-test only — drop it before charting.
+    const shown = months.slice(1);
+    // Current month shows actual + back-tested forecast together (no gap).
+    const historical = shown.map(({ month, services }, i) => {
+      const isCurrent = i === shown.length - 1;
+      const low = isCurrent ? built.currentLow : null;
+      const high = isCurrent ? built.currentHigh : null;
+      return {
+        month,
+        services,
+        forecast:
+          isCurrent && built.currentPrediction != null
+            ? Math.round(built.currentPrediction)
+            : (null as number | null),
+        fcBandLow: low,
+        fcBandDiff: low != null && high != null ? Math.max(0, high - low) : null,
+      };
+    });
     if (built.insufficient || !built.forecast) return historical;
     const cur2 = new Date(now);
     const nextMonths = built.forecast.map((val, i) => {
@@ -527,7 +559,7 @@ const Dashboard = () => {
       };
     });
     return [...historical, ...nextMonths];
-  }, [requests, forecastWindow, forecastHorizon, forecastMethod]);
+  }, [requests, forecastWindow, forecastHorizon]);
 
   // ─── tasksMap (all-time completions by email) ───────────────────────────────
 
@@ -686,8 +718,7 @@ const Dashboard = () => {
       forecastByVolunteerId[v.id] = buildForecastSeries(
         byEmailByBucket[v.emailKey] || [],
         forecastWindow,
-        forecastHorizon,
-        forecastMethod
+        forecastHorizon
       );
     });
 
@@ -700,22 +731,27 @@ const Dashboard = () => {
     });
 
     // All-caretakers (whole approved pool) forecast — the primary series + summary metric.
-    const allForecast = buildForecastSeries(
-      allByBucket, forecastWindow, forecastHorizon, forecastMethod
-    );
+    const allForecast = buildForecastSeries(allByBucket, forecastWindow, forecastHorizon);
     const allForecastInsufficient = allForecast.insufficient || !allForecast.forecast;
     const allNextForecast = !allForecastInsufficient
       ? Math.round((allForecast.forecast as number[])[0])
       : null;
 
-    // Historical chart rows (bands null for historical)
+    // Historical chart rows. Bands are null except on the current (last) bucket,
+    // which also carries a back-tested forecast so the two lines meet there.
     const trendChartDataBase = chartBuckets.map((b, idx) => {
+      const isCurrent = idx === chartBuckets.length - 1;
+      const low = isCurrent ? allForecast.currentLow : null;
+      const high = isCurrent ? allForecast.currentHigh : null;
       const row: Record<string, string | number | null> = {
         label: b.label,
         allActual: allByBucket[idx] ?? 0,
-        allFc: null,
-        allBandLow: null,
-        allBandDiff: null,
+        allFc:
+          isCurrent && allForecast.currentPrediction != null
+            ? Math.round(allForecast.currentPrediction)
+            : null,
+        allBandLow: low,
+        allBandDiff: low != null && high != null ? Math.max(0, high - low) : null,
       };
       return row;
     });
@@ -828,7 +864,7 @@ const Dashboard = () => {
     };
   }, [
     approvedVolunteers, ratingsMap, tasksMap, assignments,
-    volunteerPeriodFilter, forecastWindow, forecastHorizon, forecastMethod,
+    volunteerPeriodFilter, forecastWindow, forecastHorizon,
   ]);
 
   // ─── Service helpers ─────────────────────────────────────────────────────────
@@ -921,8 +957,8 @@ const Dashboard = () => {
       const idx = months.findIndex((m) => m.key === `${d.getFullYear()}-${d.getMonth()}`);
       if (idx >= 0) requestsByMonth[idx] += 1;
     });
-    const capBuilt = buildForecastSeries(completedByMonth, forecastWindow, forecastHorizon, forecastMethod);
-    const demBuilt = buildForecastSeries(requestsByMonth, forecastWindow, forecastHorizon, forecastMethod);
+    const capBuilt = buildForecastSeries(completedByMonth, forecastWindow, forecastHorizon);
+    const demBuilt = buildForecastSeries(requestsByMonth, forecastWindow, forecastHorizon);
     const insufficient = capBuilt.insufficient || demBuilt.insufficient;
 
     // All forecast steps
@@ -967,7 +1003,7 @@ const Dashboard = () => {
       capBadge: confidenceBadge(capBuilt.validDataMonthCount, capBuilt.cv),
       demBadge: confidenceBadge(demBuilt.validDataMonthCount, demBuilt.cv),
     };
-  }, [assignments, requests, forecastWindow, forecastHorizon, forecastMethod]);
+  }, [assignments, requests, forecastWindow, forecastHorizon]);
 
   // ─── Service demand forecast (1a fix: exclude cancelled) ────────────────────
 
@@ -1012,7 +1048,7 @@ const Dashboard = () => {
       const vals = byService[id];
       const total = vals.reduce((a, b) => a + b, 0);
       if (total === 0) return;
-      const built = buildForecastSeries(vals, forecastWindow, forecastHorizon, forecastMethod);
+      const built = buildForecastSeries(vals, forecastWindow, forecastHorizon);
       const fc = built.insufficient || !built.forecast ? 0 : Math.round(built.forecast[0]);
       result.push({
         name: toDisplayName(id),
@@ -1025,7 +1061,7 @@ const Dashboard = () => {
       });
     });
     return result.sort((a, b) => b.forecast - a.forecast);
-  }, [requests, forecastWindow, forecastHorizon, forecastMethod]);
+  }, [requests, forecastWindow, forecastHorizon]);
 
   const requestVolumeForecastSummary = useMemo(() => {
     const ok = serviceDemandForecast.filter((s) => !s.insufficient);
@@ -1132,7 +1168,8 @@ const Dashboard = () => {
 
     const cur = new Date();
     const months: { month: string; cancelled: number; key: string }[] = [];
-    for (let i = forecastWindow - 1; i >= 0; i--) {
+    // One extra leading month of back-test lead-in (sliced off before charting).
+    for (let i = forecastWindow; i >= 0; i--) {
       const d = new Date(cur.getFullYear(), cur.getMonth() - i, 1);
       const key = `${d.getFullYear()}-${d.getMonth()}`;
       months.push({
@@ -1152,9 +1189,7 @@ const Dashboard = () => {
     });
 
     const cancelValues = months.map((m) => m.cancelled);
-    const cancelBuilt = buildForecastSeries(
-      cancelValues, forecastWindow, forecastHorizon, forecastMethod
-    );
+    const cancelBuilt = buildForecastSeries(cancelValues, forecastWindow, forecastHorizon);
 
     type CancelRow = {
       month: string;
@@ -1163,15 +1198,29 @@ const Dashboard = () => {
       fcBandLow: number | null;
       fcBandDiff: number | null;
     };
+    // months[0] is lead-in for the back-test only — drop it before charting.
+    const shownMonths = months.slice(1);
+    // Current month keeps its actual bar and gains a back-tested forecast point,
+    // so the dashed line starts there rather than jumping to next month.
+    const hist: CancelRow[] = shownMonths.map(({ month, cancelled }, i) => {
+      const isCurrent = i === shownMonths.length - 1;
+      const low = isCurrent ? cancelBuilt.currentLow : null;
+      const high = isCurrent ? cancelBuilt.currentHigh : null;
+      return {
+        month,
+        cancelled,
+        cancelledFc:
+          isCurrent && cancelBuilt.currentPrediction != null
+            ? Math.round(cancelBuilt.currentPrediction)
+            : null,
+        fcBandLow: low,
+        fcBandDiff: low != null && high != null ? Math.max(0, high - low) : null,
+      };
+    });
     let cancellationChartData: CancelRow[];
     if (cancelBuilt.insufficient || !cancelBuilt.forecast) {
-      cancellationChartData = months.map(({ month, cancelled }) => ({
-        month, cancelled, cancelledFc: null, fcBandLow: null, fcBandDiff: null,
-      }));
+      cancellationChartData = hist;
     } else {
-      const hist: CancelRow[] = months.map(({ month, cancelled }) => ({
-        month, cancelled, cancelledFc: null, fcBandLow: null, fcBandDiff: null,
-      }));
       const fcRows: CancelRow[] = cancelBuilt.forecast.map((val, i) => {
         const d = new Date(cur.getFullYear(), cur.getMonth() + i + 1, 1);
         const low = cancelBuilt.low?.[i] ?? null;
@@ -1227,7 +1276,7 @@ const Dashboard = () => {
       topReason,
       insights,
     };
-  }, [requests, cancelPeriodFilter, forecastWindow, forecastHorizon, forecastMethod]);
+  }, [requests, cancelPeriodFilter, forecastWindow, forecastHorizon]);
 
   // ─── Volunteer accept / decline (Operations — same period as cancellations) ─
 
@@ -1369,7 +1418,7 @@ const Dashboard = () => {
       completedThisWeek,
       cancellationRate: cancellationAnalytics.rate,
       capacityForecast,
-      forecastMethod,
+      forecastMethod: FORECAST_METHOD,
       serviceDemandForecast,
       cancellationReasons: cancellationAnalytics.reasonData,
       monthlyTrend,
@@ -1510,29 +1559,6 @@ const Dashboard = () => {
                     ))}
                   </div>
                 </div>
-                <div className="flex w-full flex-col gap-2">
-                  <span className="text-sm font-semibold text-foreground">Method</span>
-                  <p className="text-xs text-muted-foreground">
-                    Trend follows recent direction; Average repeats a typical month
-                  </p>
-                  <div className="flex w-full rounded-md border bg-muted/50 p-0.5">
-                    {(["trend", "average"] as const).map((m) => (
-                      <button
-                        key={m}
-                        type="button"
-                        onClick={() => setForecastMethod(m)}
-                        className={cn(
-                          "flex-1 rounded px-2 py-2 text-sm font-semibold capitalize",
-                          forecastMethod === m
-                            ? "bg-background shadow-sm"
-                            : "text-muted-foreground hover:text-foreground"
-                        )}
-                      >
-                        {m}
-                      </button>
-                    ))}
-                  </div>
-                </div>
               </div>
             </div>
           </div>
@@ -1589,8 +1615,8 @@ const Dashboard = () => {
           <p className="text-sm text-muted-foreground pt-0.5">
             Forecast uses last {forecastWindow} months · {forecastHorizon} month
             {forecastHorizon > 1 ? "s" : ""} ahead ·{" "}
-            <span className="font-bold text-foreground uppercase">{forecastMethod}</span>
-            {" · "}
+            <span className="font-bold text-foreground uppercase">{FORECAST_METHOD}</span>
+            {" (linear regression) · "}
             <span className="text-xs">
               Use the forecast button (bottom-right) to adjust.
             </span>
@@ -3091,8 +3117,6 @@ const Dashboard = () => {
                         </p>
                       </div>
                     </div>
-                    <div className="flex flex-col gap-4 lg:flex-row lg:items-center">
-                      <div className="min-w-0 flex-1">
                     <ResponsiveContainer width="100%" height={200}>
                       <ComposedChart data={cancellationAnalytics.chartData} margin={CHART_MARGIN}>
                         <defs>
@@ -3175,25 +3199,6 @@ const Dashboard = () => {
                         />
                       </ComposedChart>
                     </ResponsiveContainer>
-                      </div>
-                      <ChartLegend
-                        orientation="vertical"
-                        title="Legend"
-                        className="lg:w-44 lg:shrink-0"
-                        items={[
-                          {
-                            label: "Actual",
-                            color: "hsl(var(--destructive))",
-                            variant: "bar",
-                          },
-                          !cancellationAnalytics.cancellationForecastInsufficient && {
-                            label: "Forecast",
-                            color: "hsl(var(--destructive))",
-                            variant: "dashed",
-                          },
-                        ]}
-                      />
-                    </div>
                     {cancellationAnalytics.cancellationForecastInsufficient && (
                       <p className="text-xs text-muted-foreground mt-2">
                         Insufficient data to extend forecast (need at least 2 months with

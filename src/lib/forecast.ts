@@ -30,21 +30,13 @@ export function linearRegression(values: number[]): { m: number; b: number } {
   return { m, b };
 }
 
-export type ForecastMethod = "trend" | "average";
+export type ForecastMethod = "trend";
 
 /**
- * Predict next N values using linear regression (trend) or simple average.
+ * Predict next N values using linear regression (trend).
  */
-export function predictNext(
-  values: number[],
-  steps: number = 2,
-  method: ForecastMethod = "trend"
-): number[] {
+export function predictNext(values: number[], steps: number = 2): number[] {
   if (values.length === 0) return [];
-  if (method === "average") {
-    const avg = values.reduce((a, b) => a + b, 0) / values.length;
-    return Array.from({ length: steps }, () => Math.max(0, Math.round(avg * 10) / 10));
-  }
   const { m, b } = linearRegression(values);
   const n = values.length;
   const forecast: number[] = [];
@@ -71,17 +63,39 @@ export type BuildForecastSeriesResult = {
   validDataMonthCount: number;
   /** Coefficient of variation = stdDev(window) / mean(window). */
   cv: number;
+  /**
+   * Back-tested prediction for the current (last) bucket, fitted on the buckets
+   * *before* it. Lets a chart plot a forecast point on the current month next to
+   * its actual, so the actual and forecast lines meet instead of leaving a gap.
+   * Null when there are fewer than 2 non-zero buckets before the current one.
+   */
+  currentPrediction: number | null;
+  /** Lower bound for `currentPrediction` (1 residual std dev). */
+  currentLow: number | null;
+  /** Upper bound for `currentPrediction`. */
+  currentHigh: number | null;
 };
+
+/** Std dev of residuals around the fitted trend line. */
+function trendResidualStdDev(series: number[]): number {
+  const { m, b } = linearRegression(series);
+  const resVar = series.reduce((s, v, i) => s + (v - (m * i + b)) ** 2, 0) / series.length;
+  return Math.sqrt(resVar);
+}
 
 /**
  * Slice to last `forecastWindow` points, require ≥2 non-zero samples to forecast.
  * Adds prediction bands (low/high) and CV for the confidence badge.
+ *
+ * Pass `forecastWindow + 1` values — one bucket of lead-in beyond the displayed
+ * window — so `currentPrediction` can be back-tested on a full-size window. Only
+ * the last `forecastWindow` values are used for the display series and the
+ * forward forecast, so the extra leading value never shows up on a chart.
  */
 export function buildForecastSeries(
   values: number[],
   forecastWindow: number,
-  forecastHorizon: number,
-  forecastMethod: ForecastMethod
+  forecastHorizon: number
 ): BuildForecastSeriesResult {
   const series = values.slice(-forecastWindow);
   const validPoints = series.filter((v) => v > 0).length;
@@ -94,6 +108,27 @@ export function buildForecastSeries(
   const stdDev = Math.sqrt(variance);
   const cv = mean > 0 ? stdDev / mean : stdDev > 0 ? Infinity : 0;
 
+  // Back-test the current bucket: fit on the buckets before it, predict one step.
+  // This is what the model would have said for "this month" knowing only the
+  // completed months prior — so it can be compared against the live actual.
+  //
+  // The training set is a *full* `forecastWindow` shifted back one bucket, so a
+  // 3-month window trains on the 3 months before the current one rather than on
+  // a truncated 2. That needs `forecastWindow + 1` values from the caller; when
+  // only `forecastWindow` are supplied it degrades to whatever history precedes
+  // the current bucket.
+  const priorSeries = values.slice(-(forecastWindow + 1), -1);
+  let currentPrediction: number | null = null;
+  let currentLow: number | null = null;
+  let currentHigh: number | null = null;
+  if (priorSeries.filter((v) => v > 0).length >= 2) {
+    const [pred] = predictNext(priorSeries, 1);
+    const priorResidual = trendResidualStdDev(priorSeries);
+    currentPrediction = pred;
+    currentLow = Math.max(0, Math.round((pred - priorResidual) * 10) / 10);
+    currentHigh = Math.round((pred + priorResidual) * 10) / 10;
+  }
+
   if (validPoints < 2) {
     return {
       actual: series,
@@ -105,21 +140,16 @@ export function buildForecastSeries(
       residualStdDev: stdDev,
       validDataMonthCount: validPoints,
       cv,
+      currentPrediction,
+      currentLow,
+      currentHigh,
     };
   }
 
   // Residual std dev on the training window
-  let residualStdDev: number;
-  if (forecastMethod === "average") {
-    const resVar = series.reduce((s, v) => s + (v - mean) ** 2, 0) / series.length;
-    residualStdDev = Math.sqrt(resVar);
-  } else {
-    const { m, b } = linearRegression(series);
-    const resVar = series.reduce((s, v, i) => s + (v - (m * i + b)) ** 2, 0) / series.length;
-    residualStdDev = Math.sqrt(resVar);
-  }
+  const residualStdDev = trendResidualStdDev(series);
 
-  const forecast = predictNext(series, forecastHorizon, forecastMethod);
+  const forecast = predictNext(series, forecastHorizon);
 
   // Prediction bands: step index i → step number h = i + 1 (1-indexed)
   const low = forecast.map((f, i) =>
@@ -139,6 +169,9 @@ export function buildForecastSeries(
     residualStdDev,
     validDataMonthCount: validPoints,
     cv,
+    currentPrediction,
+    currentLow,
+    currentHigh,
   };
 }
 
