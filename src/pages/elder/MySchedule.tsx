@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { ElderNavbar } from "@/components/elder/ElderNavbar";
 import nurseImg from "@/assets/volunteer-nurse.png";
 import courierImg from "@/assets/volunteer-courier.jpg";
-import { Calendar, MapPin, Clock, Phone, HeartHandshake, ShoppingBasket, User } from "lucide-react";
+import { Calendar, MapPin, Clock, HeartHandshake, ShoppingBasket, User } from "lucide-react";
 import { useEffect, useState, useMemo } from "react";
 import { db } from "@/lib/firebase";
 import { addDoc, collection, doc, onSnapshot, orderBy, query, serverTimestamp, updateDoc, where } from "firebase/firestore";
@@ -144,7 +144,6 @@ const MySchedule = () => {
                         </div>
                         <div className="flex flex-col gap-2">
                           <Button size="sm" onClick={() => setRateTarget(a)}>Confirm Completed</Button>
-                          <Button size="sm" variant="outline" className="gap-2" aria-label="Call volunteer"><Phone className="h-4 w-4" /> Call</Button>
                         </div>
                       </div>
                     </Card>
@@ -172,9 +171,6 @@ const MySchedule = () => {
                     {a.notes && (
                       <p className="mt-3 text-sm">{a.notes}</p>
                     )}
-                  </div>
-                  <div className="flex flex-col gap-2">
-                    <Button size="sm" variant="outline" className="gap-2" aria-label="Call volunteer"><Phone className="h-4 w-4" /> Call</Button>
                   </div>
                 </div>
               </Card>
