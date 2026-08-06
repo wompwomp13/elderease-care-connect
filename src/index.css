@@ -35,6 +35,11 @@ All colors MUST be HSL.
     --destructive: 0 84% 60%;
     --destructive-foreground: 0 0% 100%;
 
+    /* Chart forecast series — deliberately off-palette so projected values never
+       read as actuals. Violet stays distinct from every role theme (cyan admin,
+       green guardian, amber volunteer) and from --destructive. */
+    --forecast: 262 83% 58%;
+
     --border: 214 32% 91%;
     --input: 214 32% 91%;
     --ring: 199 100% 50%;
@@ -135,6 +140,9 @@ All colors MUST be HSL.
 
     --destructive: 0 62.8% 30.6%;
     --destructive-foreground: 210 40% 98%;
+
+    /* Lifted for contrast against the dark canvas. */
+    --forecast: 263 90% 74%;
 
     --border: 217.2 32.6% 17.5%;
     --input: 217.2 32.6% 17.5%;

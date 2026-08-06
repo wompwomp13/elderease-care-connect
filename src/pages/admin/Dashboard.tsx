@@ -1202,6 +1202,9 @@ const Dashboard = () => {
     const shownMonths = months.slice(1);
     // Current month keeps its actual bar and gains a back-tested forecast point,
     // so the dashed line starts there rather than jumping to next month.
+    // Band keys use 0 (not null) on months with no band: they feed a stacked
+    // <Area> pair, and a null inside a stack yields a NaN y-domain that takes
+    // the Bar down with it. A zero-height band is invisible anyway.
     const hist: CancelRow[] = shownMonths.map(({ month, cancelled }, i) => {
       const isCurrent = i === shownMonths.length - 1;
       const low = isCurrent ? cancelBuilt.currentLow : null;
@@ -1213,8 +1216,8 @@ const Dashboard = () => {
           isCurrent && cancelBuilt.currentPrediction != null
             ? Math.round(cancelBuilt.currentPrediction)
             : null,
-        fcBandLow: low,
-        fcBandDiff: low != null && high != null ? Math.max(0, high - low) : null,
+        fcBandLow: low ?? 0,
+        fcBandDiff: low != null && high != null ? Math.max(0, high - low) : 0,
       };
     });
     let cancellationChartData: CancelRow[];
@@ -1229,8 +1232,8 @@ const Dashboard = () => {
           month: d.toLocaleString(undefined, { month: "short", year: "2-digit" }),
           cancelled: null,
           cancelledFc: Math.round(val),
-          fcBandLow: low,
-          fcBandDiff: low != null && high != null ? Math.max(0, high - low) : null,
+          fcBandLow: low ?? 0,
+          fcBandDiff: low != null && high != null ? Math.max(0, high - low) : 0,
         };
       });
       cancellationChartData = [...hist, ...fcRows];
@@ -2224,7 +2227,7 @@ const Dashboard = () => {
                             name={FORECAST_BAND_AREA_NAME}
                             dataKey="fcBandDiff"
                             stroke="none"
-                            fill="hsl(var(--primary))"
+                            fill="hsl(var(--forecast))"
                             fillOpacity={0.15}
                             stackId="band"
                             dot={false}
@@ -2258,10 +2261,10 @@ const Dashboard = () => {
                             type="monotone"
                             dataKey="forecast"
                             name="Forecast"
-                            stroke="hsl(var(--primary))"
+                            stroke="hsl(var(--forecast))"
                             strokeWidth={2.5}
                             strokeDasharray="6 4"
-                            dot={{ fill: "hsl(var(--primary))", r: 2 }}
+                            dot={{ fill: "hsl(var(--forecast))", r: 2 }}
                             activeDot={{ r: 5, strokeWidth: 2, stroke: "hsl(var(--background))" }}
                             connectNulls
                           />
@@ -2280,7 +2283,7 @@ const Dashboard = () => {
                             },
                             hasForecast && {
                               label: "Forecast",
-                              color: "hsl(var(--primary))",
+                              color: "hsl(var(--forecast))",
                               variant: "dashed",
                             },
                           ]}
@@ -2850,7 +2853,7 @@ const Dashboard = () => {
                           name={FORECAST_BAND_AREA_NAME}
                           dataKey="allBandDiff"
                           stroke="none"
-                          fill="hsl(var(--primary))"
+                          fill="hsl(var(--forecast))"
                           fillOpacity={0.15}
                           stackId="band_all"
                           dot={false}
@@ -2873,10 +2876,10 @@ const Dashboard = () => {
                         <Line
                           type="monotone"
                           dataKey="allFc"
-                          stroke="hsl(var(--primary))"
+                          stroke="hsl(var(--forecast))"
                           strokeWidth={3}
                           strokeDasharray="6 4"
-                          dot={{ r: 2.5, fill: "hsl(var(--primary))" }}
+                          dot={{ r: 2.5, fill: "hsl(var(--forecast))" }}
                           activeDot={{ r: 6, strokeWidth: 2, stroke: "hsl(var(--background))" }}
                           name="All caretakers (forecast)"
                           connectNulls
@@ -2896,7 +2899,7 @@ const Dashboard = () => {
                           },
                           {
                             label: "Forecast",
-                            color: "hsl(var(--primary))",
+                            color: "hsl(var(--forecast))",
                             variant: "dashed" as const,
                           },
                         ]}
@@ -3171,7 +3174,7 @@ const Dashboard = () => {
                           name={FORECAST_BAND_AREA_NAME}
                           dataKey="fcBandDiff"
                           stroke="none"
-                          fill="hsl(var(--destructive))"
+                          fill="hsl(var(--forecast))"
                           fillOpacity={0.15}
                           stackId="band"
                           dot={false}
@@ -3179,21 +3182,27 @@ const Dashboard = () => {
                           legendType="none"
                           connectNulls={false}
                         />
+                        {/* Bars must sit outside the band's stack group: a Bar with no
+                            stackId alongside stacked Areas gets sized from the stack
+                            group and collapses to zero width. barSize pins it. */}
                         <Bar
                           dataKey="cancelled"
                           name="Actual"
                           fill="url(#barCancel)"
                           radius={[6, 6, 0, 0]}
+                          barSize={28}
                           maxBarSize={56}
+                          minPointSize={2}
+                          isAnimationActive={false}
                         />
                         <Line
                           type="monotone"
                           dataKey="cancelledFc"
                           name="Forecast"
-                          stroke="hsl(var(--destructive))"
+                          stroke="hsl(var(--forecast))"
                           strokeWidth={2.5}
                           strokeDasharray="6 4"
-                          dot={{ r: 3, fill: "hsl(var(--destructive))" }}
+                          dot={{ r: 3, fill: "hsl(var(--forecast))" }}
                           activeDot={{ r: 5, strokeWidth: 2, stroke: "hsl(var(--background))" }}
                           connectNulls={false}
                         />
