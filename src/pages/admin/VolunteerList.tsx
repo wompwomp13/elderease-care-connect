@@ -33,6 +33,20 @@ type Volunteer = {
   idFileUrl?: string | null;
   idFileName?: string | null;
   profilePhotoUrl?: string | null;
+  /** Reason captured when the account was terminated. Cleared on reactivation. */
+  terminationReason?: string | null;
+  /** Reason from the most recent termination, kept after reactivation for history. */
+  previousTerminationReason?: string | null;
+  /** Firestore timestamp of the last terminate/reactivate decision. */
+  decidedAt?: { toDate?: () => Date; seconds?: number } | null;
+};
+
+/** Firestore timestamps arrive as Timestamp objects (or nulls on pending writes). */
+const toDateOrNull = (ts: Volunteer["decidedAt"]): Date | null => {
+  if (!ts) return null;
+  if (typeof ts.toDate === "function") return ts.toDate();
+  if (typeof ts.seconds === "number") return new Date(ts.seconds * 1000);
+  return null;
 };
 
 const SERVICE_OPTIONS = [
@@ -249,7 +263,7 @@ const VolunteerList = () => {
 
   const reactivateVolunteer = async (v: Volunteer) => {
     try {
-      const prevReason = (v as any).terminationReason?.trim() || null;
+      const prevReason = v.terminationReason?.trim() || null;
       await updateDoc(doc(db, "pendingVolunteers", v.id), {
         status: "approved",
         terminationReason: null,
@@ -710,9 +724,33 @@ const VolunteerList = () => {
             <AlertDialogHeader>
               <AlertDialogTitle>Reactivate volunteer?</AlertDialogTitle>
               <AlertDialogDescription>
-                This will restore the volunteer&apos;s account and grant them access again. They will be able to receive new assignments.
+                This will restore {reactivateTarget?.fullName?.trim() || "the volunteer"}&apos;s account and
+                grant them access again. They will be able to receive new assignments.
               </AlertDialogDescription>
             </AlertDialogHeader>
+
+            {/* Why this account was terminated — shown so the admin can decide with context */}
+            <div className="rounded-lg border border-rose-200 bg-rose-50/60 p-3 dark:border-rose-500/20 dark:bg-rose-500/5">
+              <div className="flex items-center justify-between gap-3 mb-1">
+                <p className="text-xs font-medium uppercase tracking-wide text-rose-700 dark:text-rose-400">
+                  Reason for termination
+                </p>
+                {(() => {
+                  const decided = toDateOrNull(reactivateTarget?.decidedAt);
+                  return decided ? (
+                    <span className="text-xs text-muted-foreground shrink-0">
+                      {format(decided, "MMM d, yyyy")}
+                    </span>
+                  ) : null;
+                })()}
+              </div>
+              <p className="text-sm whitespace-pre-wrap break-words text-foreground">
+                {reactivateTarget?.terminationReason?.trim() ||
+                  reactivateTarget?.previousTerminationReason?.trim() ||
+                  "No reason was recorded for this termination."}
+              </p>
+            </div>
+
             <div className="flex justify-end gap-2">
               <AlertDialogCancel>Cancel</AlertDialogCancel>
               <AlertDialogAction
