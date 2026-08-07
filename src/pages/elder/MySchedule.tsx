@@ -52,7 +52,9 @@ const MySchedule = () => {
 
   const upcoming = useMemo(() => (assignments || []).filter(a => a.status !== "completed"), [assignments]);
   const needsConfirm = useMemo(() => (assignments || []).filter(a => a.status === "completed" && !a.guardianConfirmed), [assignments]);
-  const completed = useMemo(() => (assignments || []).filter(a => a.status === "completed" || a.guardianConfirmed), [assignments]);
+  // A service only counts as completed once the guardian has confirmed it. Until then it
+  // lives in "Needs Your Confirmation" above and must not also appear in this table.
+  const completed = useMemo(() => (assignments || []).filter(a => a.status === "completed" && a.guardianConfirmed === true), [assignments]);
 
   const toStartTimestamp = (a: any): number => {
     const day = typeof a.serviceDateTS === "number" ? a.serviceDateTS : (a.serviceDateTS?.toMillis?.() ?? 0);
