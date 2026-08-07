@@ -51,9 +51,6 @@ type TooltipPayloadEntry = {
   color?: string;
 };
 
-/** Set as name= on every forecast uncertainty <Area> so tooltips can hide them reliably. */
-const FORECAST_BAND_AREA_NAME = "__forecastRangeBand";
-
 /**
  * Forecasts use linear regression on the selected window. A simple-average mode
  * used to be selectable, but it only ever repeated a typical month and could not
@@ -62,25 +59,13 @@ const FORECAST_BAND_AREA_NAME = "__forecastRangeBand";
 const FORECAST_METHOD: ForecastMethod = "trend";
 
 /**
- * Helper Recharts series (shaded forecast bands, gradient fills under lines) carry
- * a name starting with "__" so they render visually but never show up in tooltips.
+ * Helper Recharts series (gradient fills under lines) carry a name starting with
+ * "__" so they render visually but never show up in tooltips.
  */
-function isForecastBandPayloadEntry(p: TooltipPayloadEntry): boolean {
-  if (p.name === FORECAST_BAND_AREA_NAME) return true;
-  const dk = String(p.dataKey ?? "").toLowerCase();
-  const nm = String(p.name ?? "").toLowerCase();
-  if (nm.startsWith("__")) return true;
-  return (
-    dk.includes("bandlow") ||
-    dk.includes("banddiff") ||
-    nm.includes("bandlow") ||
-    nm.includes("banddiff") ||
-    dk === "fcbandlow" ||
-    dk === "fcbanddiff"
-  );
+function isHelperPayloadEntry(p: TooltipPayloadEntry): boolean {
+  return String(p.name ?? "").startsWith("__");
 }
 
-/** Tooltip that hides internal band series so users only see actual + forecast lines. */
 /** Shared tight chart margin — axis titles are conveyed by the card heading instead. */
 const CHART_MARGIN = { top: 8, right: 12, left: 4, bottom: 4 } as const;
 
@@ -93,6 +78,7 @@ const SERVICE_CATEGORIES = [
   { id: "socialization", label: "Socialization", color: "hsl(150 55% 42%)" },
 ] as const;
 
+/** Tooltip that hides internal helper series so users only see actual + forecast lines. */
 function BandAwareTooltip({
   active,
   payload,
@@ -105,7 +91,7 @@ function BandAwareTooltip({
   labelPrefix?: string;
 }) {
   if (!active || !payload?.length) return null;
-  const rows = payload.filter((p) => !isForecastBandPayloadEntry(p) && p.value != null);
+  const rows = payload.filter((p) => !isHelperPayloadEntry(p) && p.value != null);
   if (!rows.length) return null;
   const header =
     labelPrefix != null && labelPrefix !== "" ? `${labelPrefix}: ${label}` : String(label ?? "");
@@ -473,8 +459,6 @@ const Dashboard = () => {
     // so the forecast line starts on top of the actual instead of leaving a gap.
     const historical = shown.map(({ month, services }, i) => {
       const isCurrent = i === shown.length - 1;
-      const low = isCurrent ? built.currentLow : null;
-      const high = isCurrent ? built.currentHigh : null;
       return {
         month,
         services,
@@ -482,22 +466,16 @@ const Dashboard = () => {
           isCurrent && built.currentPrediction != null
             ? Math.round(built.currentPrediction)
             : (null as number | null),
-        fcBandLow: low,
-        fcBandDiff: low != null && high != null ? Math.max(0, high - low) : null,
       };
     });
     if (built.insufficient || !built.forecast) return historical;
     const cur2 = new Date(now);
     const nextMonths = built.forecast.map((val, i) => {
       const d = new Date(cur2.getFullYear(), cur2.getMonth() + i + 1, 1);
-      const low = built.low?.[i] ?? null;
-      const high = built.high?.[i] ?? null;
       return {
         month: d.toLocaleString(undefined, { month: "short" }),
         services: null as number | null,
         forecast: Math.round(val),
-        fcBandLow: low,
-        fcBandDiff: low != null && high != null ? Math.max(0, high - low) : null,
       };
     });
     return [...historical, ...nextMonths];
@@ -531,8 +509,6 @@ const Dashboard = () => {
     // Current month shows actual + back-tested forecast together (no gap).
     const historical = shown.map(({ month, services }, i) => {
       const isCurrent = i === shown.length - 1;
-      const low = isCurrent ? built.currentLow : null;
-      const high = isCurrent ? built.currentHigh : null;
       return {
         month,
         services,
@@ -540,22 +516,16 @@ const Dashboard = () => {
           isCurrent && built.currentPrediction != null
             ? Math.round(built.currentPrediction)
             : (null as number | null),
-        fcBandLow: low,
-        fcBandDiff: low != null && high != null ? Math.max(0, high - low) : null,
       };
     });
     if (built.insufficient || !built.forecast) return historical;
     const cur2 = new Date(now);
     const nextMonths = built.forecast.map((val, i) => {
       const d = new Date(cur2.getFullYear(), cur2.getMonth() + i + 1, 1);
-      const low = built.low?.[i] ?? null;
-      const high = built.high?.[i] ?? null;
       return {
         month: d.toLocaleString(undefined, { month: "short" }),
         services: null as number | null,
         forecast: Math.round(val),
-        fcBandLow: low,
-        fcBandDiff: low != null && high != null ? Math.max(0, high - low) : null,
       };
     });
     return [...historical, ...nextMonths];
@@ -737,12 +707,10 @@ const Dashboard = () => {
       ? Math.round((allForecast.forecast as number[])[0])
       : null;
 
-    // Historical chart rows. Bands are null except on the current (last) bucket,
-    // which also carries a back-tested forecast so the two lines meet there.
+    // Historical chart rows. The current (last) bucket also carries a back-tested
+    // forecast so the two lines meet there.
     const trendChartDataBase = chartBuckets.map((b, idx) => {
       const isCurrent = idx === chartBuckets.length - 1;
-      const low = isCurrent ? allForecast.currentLow : null;
-      const high = isCurrent ? allForecast.currentHigh : null;
       const row: Record<string, string | number | null> = {
         label: b.label,
         allActual: allByBucket[idx] ?? 0,
@@ -750,13 +718,11 @@ const Dashboard = () => {
           isCurrent && allForecast.currentPrediction != null
             ? Math.round(allForecast.currentPrediction)
             : null,
-        allBandLow: low,
-        allBandDiff: low != null && high != null ? Math.max(0, high - low) : null,
       };
       return row;
     });
 
-    // Forecast rows (include bands)
+    // Forecast rows
     const lastBucket = chartBuckets[chartBuckets.length - 1];
     const forecastRows: Record<string, string | number | null>[] = [];
     for (let step = 0; step < forecastHorizon; step++) {
@@ -772,19 +738,12 @@ const Dashboard = () => {
         const nd = new Date(d.getFullYear(), d.getMonth() + step + 1, 1);
         label = nd.toLocaleString(undefined, { month: "short", year: "2-digit" });
       }
-      const allLow = allForecast.low?.[step] ?? null;
-      const allHigh = allForecast.high?.[step] ?? null;
       const allStep = allForecast.forecast?.[step];
       const row: Record<string, string | number | null> = {
         label,
         allActual: null,
         allFc:
           !allForecastInsufficient && allStep != null ? Math.round(allStep) : null,
-        allBandLow: !allForecastInsufficient && allLow != null ? allLow : null,
-        allBandDiff:
-          !allForecastInsufficient && allLow != null && allHigh != null
-            ? Math.max(0, allHigh - allLow)
-            : null,
       };
       forecastRows.push(row);
     }
@@ -1195,20 +1154,13 @@ const Dashboard = () => {
       month: string;
       cancelled: number | null;
       cancelledFc: number | null;
-      fcBandLow: number | null;
-      fcBandDiff: number | null;
     };
     // months[0] is lead-in for the back-test only — drop it before charting.
     const shownMonths = months.slice(1);
     // Current month keeps its actual bar and gains a back-tested forecast point,
     // so the dashed line starts there rather than jumping to next month.
-    // Band keys use 0 (not null) on months with no band: they feed a stacked
-    // <Area> pair, and a null inside a stack yields a NaN y-domain that takes
-    // the Bar down with it. A zero-height band is invisible anyway.
     const hist: CancelRow[] = shownMonths.map(({ month, cancelled }, i) => {
       const isCurrent = i === shownMonths.length - 1;
-      const low = isCurrent ? cancelBuilt.currentLow : null;
-      const high = isCurrent ? cancelBuilt.currentHigh : null;
       return {
         month,
         cancelled,
@@ -1216,8 +1168,6 @@ const Dashboard = () => {
           isCurrent && cancelBuilt.currentPrediction != null
             ? Math.round(cancelBuilt.currentPrediction)
             : null,
-        fcBandLow: low ?? 0,
-        fcBandDiff: low != null && high != null ? Math.max(0, high - low) : 0,
       };
     });
     let cancellationChartData: CancelRow[];
@@ -1226,14 +1176,10 @@ const Dashboard = () => {
     } else {
       const fcRows: CancelRow[] = cancelBuilt.forecast.map((val, i) => {
         const d = new Date(cur.getFullYear(), cur.getMonth() + i + 1, 1);
-        const low = cancelBuilt.low?.[i] ?? null;
-        const high = cancelBuilt.high?.[i] ?? null;
         return {
           month: d.toLocaleString(undefined, { month: "short", year: "2-digit" }),
           cancelled: null,
           cancelledFc: Math.round(val),
-          fcBandLow: low ?? 0,
-          fcBandDiff: low != null && high != null ? Math.max(0, high - low) : 0,
         };
       });
       cancellationChartData = [...hist, ...fcRows];
@@ -1785,7 +1731,7 @@ const Dashboard = () => {
               <CardHeader>
                 <CardTitle className="text-lg">What this means for you</CardTitle>
                 <p className="text-sm text-muted-foreground">
-                  Signals based on the current period's data
+                  Insights based on the current period's data
                 </p>
               </CardHeader>
               <CardContent>
@@ -2208,32 +2154,6 @@ const Dashboard = () => {
                                 labelPrefix="Month"
                               />
                             )}
-                          />
-                          {/* Prediction band */}
-                          <Area
-                            type="monotone"
-                            name={FORECAST_BAND_AREA_NAME}
-                            dataKey="fcBandLow"
-                            stroke="none"
-                            fill="transparent"
-                            stackId="band"
-                            dot={false}
-                            activeDot={false}
-                            legendType="none"
-                            connectNulls={false}
-                          />
-                          <Area
-                            type="monotone"
-                            name={FORECAST_BAND_AREA_NAME}
-                            dataKey="fcBandDiff"
-                            stroke="none"
-                            fill="hsl(var(--forecast))"
-                            fillOpacity={0.15}
-                            stackId="band"
-                            dot={false}
-                            activeDot={false}
-                            legendType="none"
-                            connectNulls={false}
                           />
                           {/* Soft gradient fill under the actual line (display only) */}
                           <Area
@@ -2797,8 +2717,7 @@ const Dashboard = () => {
                       {volunteerAnalytics.chartTitle}
                     </h4>
                     <p className="text-xs text-muted-foreground mb-4">
-                      Completed services across all approved caretakers · dashed = forecast ·
-                      shaded band = prediction range
+                      Completed services across all approved caretakers · dashed = forecast
                     </p>
                     <div className="flex flex-col gap-4 lg:flex-row lg:items-center">
                       <div className="min-w-0 flex-1">
@@ -2834,32 +2753,6 @@ const Dashboard = () => {
                               labelPrefix={volunteerAnalytics.chartXLabel}
                             />
                           )}
-                        />
-                        {/* Prediction band — All caretakers */}
-                        <Area
-                          type="monotone"
-                          name={FORECAST_BAND_AREA_NAME}
-                          dataKey="allBandLow"
-                          stroke="none"
-                          fill="transparent"
-                          stackId="band_all"
-                          dot={false}
-                          activeDot={false}
-                          legendType="none"
-                          connectNulls={false}
-                        />
-                        <Area
-                          type="monotone"
-                          name={FORECAST_BAND_AREA_NAME}
-                          dataKey="allBandDiff"
-                          stroke="none"
-                          fill="hsl(var(--forecast))"
-                          fillOpacity={0.15}
-                          stackId="band_all"
-                          dot={false}
-                          activeDot={false}
-                          legendType="none"
-                          connectNulls={false}
                         />
                         {/* All caretakers — actual */}
                         <Line
@@ -3098,7 +2991,7 @@ const Dashboard = () => {
                       Last {forecastWindow} months of actuals
                       {cancellationAnalytics.cancellationForecastInsufficient
                         ? ""
-                        : " · dashed = forecast · shaded = prediction range"}
+                        : " · dashed = forecast"}
                       .
                     </p>
                     <div className="mb-4 flex flex-wrap items-end gap-x-8 gap-y-3">
@@ -3156,35 +3049,6 @@ const Dashboard = () => {
                             <BandAwareTooltip {...props} labelPrefix="Month" />
                           )}
                         />
-                        {/* Prediction band */}
-                        <Area
-                          type="monotone"
-                          name={FORECAST_BAND_AREA_NAME}
-                          dataKey="fcBandLow"
-                          stroke="none"
-                          fill="transparent"
-                          stackId="band"
-                          dot={false}
-                          activeDot={false}
-                          legendType="none"
-                          connectNulls={false}
-                        />
-                        <Area
-                          type="monotone"
-                          name={FORECAST_BAND_AREA_NAME}
-                          dataKey="fcBandDiff"
-                          stroke="none"
-                          fill="hsl(var(--forecast))"
-                          fillOpacity={0.15}
-                          stackId="band"
-                          dot={false}
-                          activeDot={false}
-                          legendType="none"
-                          connectNulls={false}
-                        />
-                        {/* Bars must sit outside the band's stack group: a Bar with no
-                            stackId alongside stacked Areas gets sized from the stack
-                            group and collapses to zero width. barSize pins it. */}
                         <Bar
                           dataKey="cancelled"
                           name="Actual"
